@@ -1,0 +1,337 @@
+{
+  "schema": 1,
+  "id": "braindance",
+  "name": "Brain Dance",
+  "parameters": [
+    {
+      "id": "algo",
+      "label": "algo",
+      "default": 0.8417,
+      "mapping": {
+        "kind": "enum",
+        "labels": [
+          "lanes",
+          "lane1",
+          "lane2",
+          "lane3",
+          "lane4",
+          "lane5",
+          "lane6",
+          "lane7",
+          "lane8",
+          "lane9",
+          "break",
+          "brk1",
+          "brk2",
+          "brk3",
+          "brk4",
+          "brk5",
+          "brk6",
+          "brk7",
+          "brk8",
+          "brk9",
+          "data",
+          "data1",
+          "data2",
+          "data3",
+          "data4",
+          "data5",
+          "data6",
+          "data7",
+          "data8",
+          "data9",
+          "eucl",
+          "eucl1",
+          "eucl2",
+          "eucl3",
+          "eucl4",
+          "eucl5",
+          "eucl6",
+          "eucl7",
+          "eucl8",
+          "eucl9",
+          "pulse",
+          "puls1",
+          "puls2",
+          "puls3",
+          "puls4",
+          "puls5",
+          "puls6",
+          "puls7",
+          "puls8",
+          "puls9",
+          "shred",
+          "shrd1",
+          "shrd2",
+          "shrd3",
+          "shrd4",
+          "shrd5",
+          "shrd6",
+          "shrd7",
+          "shrd8",
+          "shrd9"
+        ]
+      },
+      "display": "enum"
+    },
+    {
+      "id": "dense",
+      "label": "dense",
+      "default": 0.7,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "chaos",
+      "label": "chaos",
+      "default": 0.4,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "glitch",
+      "label": "glitch",
+      "default": 0.3,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "tone",
+      "label": "tone",
+      "default": 0.4,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "color",
+      "label": "color",
+      "default": 0.7,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "ring",
+      "label": "ring",
+      "default": 0.7,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    },
+    {
+      "id": "crush",
+      "label": "crush",
+      "default": 0.55,
+      "mapping": {
+        "kind": "linear",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "display": "percent"
+    }
+  ],
+  "presets": {
+    "Shred": {
+      "algo": 0.8417,
+      "dense": 0.7,
+      "chaos": 0.4,
+      "glitch": 0.3,
+      "tone": 0.4,
+      "color": 0.7,
+      "ring": 0.7,
+      "crush": 0.55
+    },
+    "Gate Storm": {
+      "algo": 0.9083,
+      "dense": 0.85,
+      "chaos": 0.65,
+      "glitch": 0.6,
+      "tone": 0.3,
+      "color": 0.85,
+      "ring": 0.85,
+      "crush": 0.5
+    },
+    "Sub Hold": {
+      "algo": 0.975,
+      "dense": 0.5,
+      "chaos": 0.75,
+      "glitch": 0.2,
+      "tone": 0.8,
+      "color": 0.3,
+      "ring": 0.45,
+      "crush": 0.4
+    },
+    "Comb Teeth": {
+      "algo": 0.875,
+      "dense": 0.6,
+      "chaos": 0.3,
+      "glitch": 0.4,
+      "tone": 0.5,
+      "color": 0.5,
+      "ring": 0.95,
+      "crush": 0.3
+    },
+    "Threes": {
+      "algo": 0.8917,
+      "dense": 0.75,
+      "chaos": 0.35,
+      "glitch": 0.45,
+      "tone": 0.35,
+      "color": 0.6,
+      "ring": 0.6,
+      "crush": 0.5
+    },
+    "Long Count": {
+      "algo": 0.9917,
+      "dense": 0.6,
+      "chaos": 0.5,
+      "glitch": 0.35,
+      "tone": 0.55,
+      "color": 0.45,
+      "ring": 0.75,
+      "crush": 0.45
+    },
+    "Synapse": {
+      "algo": 0.0083,
+      "dense": 0.5,
+      "chaos": 0.3,
+      "glitch": 0.25,
+      "tone": 0.4,
+      "color": 0.3,
+      "ring": 0.35,
+      "crush": 0.25
+    },
+    "Amen Lobe": {
+      "algo": 0.175,
+      "dense": 0.55,
+      "chaos": 0.35,
+      "glitch": 0.35,
+      "tone": 0.45,
+      "color": 0.2,
+      "ring": 0.4,
+      "crush": 0.3
+    },
+    "Two Step": {
+      "algo": 0.1917,
+      "dense": 0.5,
+      "chaos": 0.3,
+      "glitch": 0.3,
+      "tone": 0.5,
+      "color": 0.3,
+      "ring": 0.5,
+      "crush": 0.3
+    },
+    "Drill": {
+      "algo": 0.2417,
+      "dense": 0.8,
+      "chaos": 0.6,
+      "glitch": 0.75,
+      "tone": 0.25,
+      "color": 0.4,
+      "ring": 0.5,
+      "crush": 0.55
+    },
+    "Datamatic": {
+      "algo": 0.3417,
+      "dense": 0.55,
+      "chaos": 0.1,
+      "glitch": 0.3,
+      "tone": 0.2,
+      "color": 0.7,
+      "ring": 0.2,
+      "crush": 0.0
+    },
+    "Pulse Five": {
+      "algo": 0.3917,
+      "dense": 0.6,
+      "chaos": 0.2,
+      "glitch": 0.4,
+      "tone": 0.25,
+      "color": 0.8,
+      "ring": 0.35,
+      "crush": 0.2
+    },
+    "Odd Wheel": {
+      "algo": 0.6583,
+      "dense": 0.6,
+      "chaos": 0.3,
+      "glitch": 0.3,
+      "tone": 0.4,
+      "color": 0.5,
+      "ring": 0.5,
+      "crush": 0.35
+    },
+    "Spike Train": {
+      "algo": 0.675,
+      "dense": 0.55,
+      "chaos": 0.25,
+      "glitch": 0.3,
+      "tone": 0.35,
+      "color": 0.5,
+      "ring": 0.5,
+      "crush": 0.3
+    },
+    "Overload": {
+      "algo": 0.775,
+      "dense": 0.85,
+      "chaos": 0.6,
+      "glitch": 0.85,
+      "tone": 0.2,
+      "color": 0.85,
+      "ring": 0.7,
+      "crush": 0.75
+    },
+    "Resonance": {
+      "algo": 0.1417,
+      "dense": 0.45,
+      "chaos": 0.3,
+      "glitch": 0.2,
+      "tone": 0.6,
+      "color": 0.15,
+      "ring": 0.9,
+      "crush": 0.15
+    }
+  },
+  "resources": {
+    "voiceCapacity": 27,
+    "stereoOutput": 1,
+    "sampleAnalysis": 131072,
+    "stockShift": [
+      "start",
+      "window",
+      "gain",
+      "end"
+    ],
+    "display": {
+      "stateBytes": 1456,
+      "stateAlignment": 4,
+      "paths": 0,
+      "points": 0,
+      "nodes": 463,
+      "texts": 18,
+      "palette": 16
+    }
+  }
+}

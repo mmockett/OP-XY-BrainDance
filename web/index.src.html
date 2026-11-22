@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brain Dance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* One visual world: a black scan room, greys for structure, red and blue only for neurons firing.
+   Layout: the scan on top, then the instrument (the OP-XY screen beside its eight encoders), then the keys. */
+:root {
+  --void: #050506;
+  --panel: #0d0d0f;
+  --line: #232327;
+  --grey: #8a8a90;
+  --ink: #e8e8ea;
+  --red: #ff2a2a;
+  --blue: #2f6bff;
+  --display: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--void); color: var(--ink); font-family: var(--display); font-weight: 400; }
+body { min-height: 100%; }
+button, select { font: inherit; color: inherit; }
+:focus-visible { outline: 1.5px solid var(--ink); outline-offset: 2px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; display: grid; gap: 14px; }
+
+/* the scan */
+.scan { position: relative; margin: 0 -16px; height: clamp(300px, 58vw, 540px); overflow: hidden; background: var(--void); border-bottom: 1px solid var(--line); }
+.scan canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hud { position: absolute; left: 16px; top: 14px; font-family: var(--mono); font-size: 11px; line-height: 1.6; color: var(--grey); pointer-events: none; letter-spacing: 0.02em; }
+.hud b { color: var(--ink); font-weight: 500; }
+.hud .r { color: var(--red); } .hud .b { color: var(--blue); }
+.title { position: absolute; right: 16px; bottom: 14px; text-align: right; pointer-events: none; }
+.title h1 { margin: 0; font-weight: 300; font-size: clamp(28px, 5vw, 52px); letter-spacing: 0.04em; line-height: 1; text-transform: lowercase; }
+.title p { margin: 6px 0 0; font-family: var(--mono); font-size: 10.5px; color: var(--grey); max-width: 46ch; margin-left: auto; text-wrap: balance; }
+.log { position: absolute; left: 16px; bottom: 14px; font-family: var(--mono); font-size: 10px; line-height: 1.5; color: #55555c; pointer-events: none; white-space: pre; }
+.start { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: rgba(5,5,6,0.72); border: 1px solid #3a3a40; border-radius: 999px; padding: 10px 20px; font-size: 14px; letter-spacing: 0.06em; cursor: pointer; backdrop-filter: blur(3px); }
+.start[hidden] { display: none; }
+
+/* the instrument */
+.instrument { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 14px; align-items: start; }
+@media (max-width: 820px) { .instrument { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; }
+.card h2 { margin: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--grey); display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.card h2 span { font-family: var(--mono); letter-spacing: 0; text-transform: none; font-weight: 400; color: #5d5d64; }
+.screen { width: 100%; aspect-ratio: 480 / 220; background: #000; border-radius: 4px; display: block; cursor: pointer; image-rendering: auto; }
+.note { margin: 0; font-size: 12.5px; color: var(--grey); line-height: 1.5; }
+
+.encoders { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px; }
+.page-label { grid-column: 1 / -1; font-family: var(--mono); font-size: 10px; color: #5d5d64; display: flex; gap: 8px; align-items: center; }
+.page-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.page-label.on { color: var(--ink); }
+.enc { display: grid; justify-items: center; gap: 4px; user-select: none; -webkit-user-select: none; touch-action: none; cursor: ns-resize; padding: 4px 0; border-radius: 8px; }
+.enc:focus-visible { outline-offset: 0; }
+.enc svg { width: 54px; height: 54px; overflow: visible; }
+.enc .name { font-size: 11px; letter-spacing: 0.1em; text-transform: lowercase; color: var(--grey); }
+.enc .val { font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; min-height: 1.3em; }
+.enc .what { font-size: 10.5px; color: #5d5d64; text-align: center; line-height: 1.3; min-height: 2.6em; max-width: 14ch; }
+
+/* transport and keys */
+.transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { background: #141417; border: 1px solid #2c2c31; border-radius: 7px; padding: 7px 12px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
+.btn:hover { border-color: #46464d; }
+.btn[aria-pressed="true"] { background: var(--ink); color: #000; border-color: var(--ink); }
+.btn .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.8; }
+select.btn { padding-right: 8px; }
+.bpm { display: inline-flex; gap: 8px; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--grey); }
+.bpm input { width: 120px; accent-color: var(--ink); }
+.bpm output { color: var(--ink); min-width: 5ch; font-variant-numeric: tabular-nums; }
+.pos { font-family: var(--mono); font-size: 12px; color: var(--grey); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.keys { position: relative; height: 128px; user-select: none; -webkit-user-select: none; touch-action: none; }
+.key { position: absolute; top: 0; border-radius: 0 0 6px 6px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 7px; font-family: var(--mono); font-size: 10px; cursor: pointer; }
+.key.w { height: 100%; background: #d9d9dc; color: #6a6a70; border: 1px solid #000; }
+.key.b { height: 60%; background: #1a1a1d; color: #6a6a70; border: 1px solid #000; z-index: 2; }
+.key.on.w { background: #fff; box-shadow: inset 0 -6px 0 var(--red); }
+.key.on.b { background: #2a2a30; box-shadow: inset 0 -6px 0 var(--blue); }
+.keyrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.keyrow .hint { font-size: 12px; color: var(--grey); }
+.roles { font-family: var(--mono); font-size: 11px; color: var(--grey); display: flex; gap: 12px; flex-wrap: wrap; }
+.drop.over { border-color: #6a6a72; background: #131316; }
+.harvest { display: grid; gap: 4px; font-family: var(--mono); font-size: 11.5px; color: var(--grey); }
+.harvest b { color: var(--ink); font-weight: 500; display: inline-block; min-width: 6ch; }
+.roles i { font-style: normal; color: var(--ink); }
+
+.about { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 820px) { .about { grid-template-columns: 1fr; } }
+.about h3 { margin: 0 0 4px; font-size: 13px; font-weight: 500; }
+.about p { margin: 0; font-size: 12.5px; color: var(--grey); line-height: 1.55; }
+.algos { display: grid; gap: 6px; }
+.algos div { font-size: 12.5px; color: var(--grey); line-height: 1.45; }
+.algos b { color: var(--ink); font-weight: 500; font-family: var(--mono); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="scan" aria-label="Brain scan visual">
+    <canvas id="scan"></canvas>
+    <div class="hud" id="hud"></div>
+    <div class="log" id="log"></div>
+    <div class="title">
+      <h1>brain dance</h1>
+      <p>Procedural glitch beats for the OP-XY, on the project tempo, tuned to the keys you hold. The more keys, the more complex.</p>
+    </div>
+    <button class="start" id="start" type="button">▶ start audio and hold C</button>
+  </section>
+
+  <div class="transport" role="group" aria-label="Transport">
+    <button class="btn" id="demo" type="button" aria-pressed="false"><span class="dot"></span>Demo: add keys</button>
+    <button class="btn" id="seq" type="button" aria-pressed="false">Sequencer play</button>
+    <button class="btn" id="click" type="button" aria-pressed="false">Click</button>
+    <label class="bpm" for="bpm">BPM <input id="bpm" type="range" min="60" max="200" step="1" value="120"><output id="bpmv">120</output></label>
+    <label class="bpm" for="preset">preset
+      <select class="btn" id="preset"></select>
+    </label>
+    <span class="pos" id="pos">stopped · free clock</span>
+  </div>
+
+  <div class="instrument">
+    <div class="card">
+      <h2>OP-XY screen <span>display.cpp, live · tap to switch page</span></h2>
+      <canvas class="screen" id="screen" width="960" height="440" aria-label="The OP-XY screen as the machine draws it"></canvas>
+      <p class="note">This is the machine's own screen code, compiled unchanged: the brain as a cloud of 270 points, links lacing it together as the playing gets denser, signals spreading through it from the clusters.</p>
+    </div>
+    <div class="card">
+      <h2>Encoders <span>drag up and down · arrows · double-click resets</span></h2>
+      <div class="encoders" id="encoders"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Keys <span>A W S E D F T G Y H U J K O L P ;</span></h2>
+    <div class="keyrow">
+      <button class="btn" id="latch" type="button" aria-pressed="true">Latch keys</button>
+      <button class="btn" id="down" type="button" aria-label="Octave down">oct −</button>
+      <button class="btn" id="up" type="button" aria-label="Octave up">oct +</button>
+      <button class="btn" id="clear" type="button">Release all</button>
+      <span class="hint">Each key you add takes the next role, busier and higher than the last.</span>
+    </div>
+    <div class="keys" id="keys"></div>
+    <div class="roles" id="roles"></div>
+  </div>
+
+  <div class="card drop" id="sampleCard">
+    <h2>Sample <span>drop a file here, or choose one</span></h2>
+    <div class="keyrow">
+      <label class="btn" for="sampleFile">Choose a sample</label>
+      <input type="file" id="sampleFile" accept="audio/*" hidden>
+      <button class="btn" id="sampleClear" type="button" hidden>Back to the synthesis</button>
+      <span class="hint" id="sampleName">No sample: every lane plays its own synthesis. Load one and Brain Dance salvages its kicks, snares, ticks, blips, tones and noise.</span>
+    </div>
+    <div class="harvest" id="harvest"></div>
+  </div>
+
+  <div class="about">
+    <div class="card">
+      <h3>The tempo</h3>
+      <p>On the OP-XY, Brain Dance is a sample engine, as Recur and Grains are, because sample engines receive the project tempo every block. With no sample it plays its own synthesis; give it one and each lane plays the best snippet it finds there. All its voices share one clock in 32nd notes. With the sequencer playing it holds to the song position within a block; stopped, the first key restarts it. Press Sequencer play and Click to hear it lock.</p>
+    </div>
+    <div class="card">
+      <h3>The algorithms <span style="color:#5d5d64;font-family:var(--mono);font-size:11px">encoder 1</span></h3>
+      <div class="algos">
+        <div><b>lanes</b> Autechre-style polymeter: euclidean lanes of 16, 12, 10 and 7 steps whose rotations drift with chaos.</div>
+        <div><b>break</b> Aphex-style: a two-bar amen read a 16th at a time; chaos chops and stutters it, glitch rolls the snare upward.</div>
+        <div><b>data</b> Ikeda-style: a bar of 32nds from a register, repeated exactly; sine pulses and bit noise under hard gates.</div>
+        <div><b>euclid</b> A clean skeleton; later keys play 12 and 10 against 16.</div>
+        <div><b>pulse</b> Pacemaker neurons on the 16th grid, one a lane, each nudging the next round a ring: interlocking figures that repeat.</div>
+        <div><b>shred</b> A bass sweeping down on every 16th in sixes against eights, gated noise in its rests, clicks in triplet stutters. Try 180 BPM.</div>
+        <div><b>1 to 9</b> Each algorithm has nine more variants on the same encoder (shrd1 to shrd9): other cycle lengths and patterns, other lanes leading, ratchets in thirds or fifths.</div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>What you're hearing</h3>
+      <p>The audio is the machine's own engine, sample.cpp, compiled to WebAssembly and run as the OP-XY would run it: four lanes a key (low, snap, click, blip), all tuned to the key, in 64-sample blocks at 44.1 kHz. A release stands in for the OP-XY's amp envelope; its filter, LFOs and effects aren't here.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const WASM_B64 = "/*__WASM__*/";
+const PANEL = /*__PANEL__*/null;
+const PRESETS = /*__PRESETS__*/null;
+
+// ---------------------------------------------------------------- controls
+const CONTROLS = [
+  { id: "algo", what: "algorithm, and its ten variants", def: 0.8417, enumLabels: [["lanes", "lane"], ["break", "brk"], ["data", "data"], ["eucl", "eucl"], ["pulse", "puls"], ["shred", "shrd"]].flatMap(([n, st]) => Array.from({ length: 10 }, (_, v) => v ? st + v : n)) },
+  { id: "dense", what: "how many hits", def: 0.7 },
+  { id: "chaos", what: "mutation, chops, probability", def: 0.4 },
+  { id: "glitch", what: "ratchets, stutters, dropouts", def: 0.3 },
+  { id: "tone", what: "decay, drop, step length", def: 0.4 },
+  { id: "color", what: "sine → square → bits; buzz", def: 0.7 },
+  { id: "ring", what: "gated reverb, then a comb", def: 0.7 },
+  { id: "crush", what: "drive and clip, then bits", def: 0.55 },
+];
+const values = CONTROLS.map(c => c.def);
+const algoName = v => CONTROLS[0].enumLabels[Math.min(59, Math.floor(v * 60))];
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---------------------------------------------------------------- the engine: main-thread copy for the screen
+const wasmBytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+let screenWasm = null, wasmModule = null;
+WebAssembly.compile(wasmBytes).then(m => {
+  wasmModule = m;
+  screenWasm = new WebAssembly.Instance(m, {}).exports;
+  pushParams();
+});
+
+function pushParams() {
+  const words = values.map(v => Math.round(Math.max(0, Math.min(1, v)) * 2147483647));
+  if (screenWasm) {
+    const p = new Int32Array(screenWasm.memory.buffer, screenWasm.bd_params(), 8);
+    p.set(words);
+  }
+  if (node) node.port.postMessage({ type: "params", words });
+}
+
+// ---------------------------------------------------------------- audio
+// The audio core: eight voices of the engine, as the OP-XY plays them. It runs
+// in an AudioWorklet where the browser allows one, otherwise on the page.
+class EngineCore {
+  constructor(post) {
+    this.post = post;
+    this.ex = null; this.words = new Int32Array(8);
+    this.voices = []; for (let i = 0; i < 8; i++) this.voices.push({ on: false, sounding: false, inc: 0, env: 0, gate: false, prev: [0, 0, 0, 0], key: -1 });
+    this.bpm = 1200; this.playing = 0; this.song = 0; this.metro = false; this.hits = []; this.calls = 0;
+    this.clickPhase = 0; this.clickEnv = 0; this.clickHz = 1700;
+    this.rel = Math.exp(-1 / (0.09 * 44100));
+  }
+  msg(d) {
+    if (d.type === "module") {
+      const m = d.module instanceof WebAssembly.Module ? d.module : new WebAssembly.Module(d.bytes);
+      this.ex = new WebAssembly.Instance(m, {}).exports; this.setWords(); this.loadSample();
+    }
+    else if (d.type === "sample") { this.pending = d; this.loadSample(); }
+    else if (d.type === "params") { this.words.set(d.words); this.setWords(); }
+    else if (d.type === "on") {
+      const v = this.voices[d.slot];
+      v.on = true; v.sounding = true; v.gate = true; v.inc = d.inc >>> 0; v.env = 1; v.key = d.key; v.prev = [0, 0, 0, 0];
+      if (this.ex) this.ex.bd_start(d.slot);
+    } else if (d.type === "off") { this.voices[d.slot].gate = false; }
+    else if (d.type === "transport") {
+      this.bpm = d.bpm_x10;
+      if (d.playing && !this.playing) this.song = 0;
+      this.playing = d.playing ? 1 : 0; this.metro = d.metro;
+    }
+  }
+  setWords() { if (this.ex) new Int32Array(this.ex.memory.buffer, this.ex.bd_params(), 8).set(this.words); }
+  // A sample: written into the engine's memory and analysed there, as the OP-XY does on load.
+  loadSample() {
+    const d = this.pending, ex = this.ex;
+    if (!d || !ex) return;
+    this.pending = null;
+    let n = 0;
+    if (d.frames) {
+      const f = Math.min(d.frames, ex.bd_sample_capacity());
+      new Int16Array(ex.memory.buffer, ex.bd_sample_data(), f * d.channels).set(d.pcm.subarray(0, f * d.channels));
+      n = ex.bd_load(f, d.rate, d.channels);
+    } else ex.bd_load(0, 0, 0);
+    const list = [];
+    const words = new Uint32Array(ex.memory.buffer, ex.bd_harvest(), 4 + 4 * Math.max(0, n));
+    for (let i = 0; i < n; i++) {
+      const r = words.subarray(4 + 4 * i, 8 + 4 * i);
+      list.push([(r[1] >>> 16) & 15, r[0], r[1] & 0xffff, r[3] / 256]);
+    }
+    this.post({ harvest: list, count: n });
+  }
+  // 128 frames into L and R
+  render(L, R) {
+    L.fill(0); R.fill(0);
+    if (!this.ex) return;
+    const ex = this.ex;
+    const perSample = this.bpm / 10 / 60 * 96 / 44100;
+    for (let half = 0; half < 2; half++) {
+      const ticks96 = this.playing ? Math.floor(this.song * perSample) >>> 0 : 0;
+      for (let s = 0; s < 8; s++) {
+        const v = this.voices[s];
+        if (!v.sounding) continue;
+        ex.bd_render(s, v.inc, this.bpm, ticks96, this.playing);
+        const out = new Int32Array(ex.memory.buffer, ex.bd_out(), 128);
+        for (let i = 0; i < 64; i++) {
+          if (!v.gate) v.env *= this.rel;
+          const g = v.env * 1.55 / 2147483648;
+          L[half * 64 + i] += out[2 * i] * g;
+          R[half * 64 + i] += out[2 * i + 1] * g;
+        }
+        for (let k = 0; k < 4; k++) {
+          const a = ex.bd_lane(s, k);
+          if (a > v.prev[k] + 40000000) this.hits.push([s, ex.bd_rank(s), k, a / 2147483648, v.key]);
+          v.prev[k] = a;
+        }
+        if (!v.gate && v.env < 0.0008) { v.sounding = false; v.on = false; }
+      }
+      if (this.playing && this.metro) {
+        const quarter = 44100 * 600 / this.bpm;
+        for (let i = 0; i < 64; i++) {
+          const t = this.song + i, n = Math.floor(t / quarter);
+          if (t - n * quarter < 1) { this.clickEnv = 0.32; this.clickPhase = 0; this.clickHz = n % 4 === 0 ? 2600 : 1700; }
+          if (this.clickEnv > 0.0005) {
+            this.clickPhase += this.clickHz / 44100;
+            const c = Math.sin(this.clickPhase * 6.283) * this.clickEnv; this.clickEnv *= 0.9965;
+            L[half * 64 + i] += c; R[half * 64 + i] += c;
+          }
+        }
+      }
+      if (this.playing) this.song += 64;
+    }
+    for (let i = 0; i < 128; i++) {
+      const l = L[i], r = R[i];
+      L[i] = Math.max(-1, Math.min(1, l * (27 + l * l) / (27 + 9 * l * l)));
+      R[i] = Math.max(-1, Math.min(1, r * (27 + r * r) / (27 + 9 * r * r)));
+    }
+    if (++this.calls % 3 === 0) {
+      this.post({ hits: this.hits, song: this.song, playing: this.playing, strikes: ex.bd_strikes() });
+      this.hits = [];
+    }
+  }
+}
+const WORKLET = EngineCore.toString() + `
+class BrainDance extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.core = new EngineCore(m => this.port.postMessage(m));
+    this.port.onmessage = e => { try { this.core.msg(e.data); } catch (err) { this.port.postMessage({ error: String(err && err.message || err) }); } };
+  }
+  process(_, outputs) {
+    const o = outputs[0];
+    try { this.core.render(o[0], o[1] || o[0]); } catch (err) { this.port.postMessage({ error: String(err && err.message || err) }); return false; }
+    return true;
+  }
+}
+registerProcessor("brain-dance", BrainDance);
+`;
+
+let ctx = null, node = null, audioReady = null, audioPath = "";
+const transport = { bpm: 120, playing: false, metro: false, song: 0 };
+
+// node: anything with port.postMessage; the worklet's own port, or the page's stand-in
+function ensureAudio() {
+  if (audioReady) return audioReady;
+  audioReady = (async () => {
+    ctx = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" });
+    const m = wasmModule || await WebAssembly.compile(wasmBytes);
+    let worklet = null;
+    for (const url of [URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })), "data:text/javascript;base64," + btoa(WORKLET)]) {
+      try { await ctx.audioWorklet.addModule(url); worklet = new AudioWorkletNode(ctx, "brain-dance", { numberOfInputs: 0, outputChannelCount: [2] }); break; } catch (e) { worklet = null; }
+    }
+    if (worklet) {
+      worklet.connect(ctx.destination);
+      worklet.port.onmessage = e => { if (e.data.error) console.warn('worklet: ' + e.data.error); else onTelemetry(e.data); };
+      node = worklet;
+      audioPath = "audio worklet";
+    } else {
+      // no worklet allowed here: the same core on the page, 1024 frames at a time
+      const core = new EngineCore(onTelemetry);
+      const sp = ctx.createScriptProcessor(1024, 0, 2);
+      sp.onaudioprocess = e => {
+        const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+        for (let at = 0; at < L.length; at += 128) core.render(L.subarray(at, at + 128), R.subarray(at, at + 128));
+      };
+      sp.connect(ctx.destination);
+      node = { port: { postMessage: d => core.msg(d) } };
+      audioPath = "page audio (no worklet here)";
+    }
+    // the worklet compiles its own copy: a compiled module doesn't cross into every worklet
+    node.port.postMessage(worklet ? { type: "module", bytes: wasmBytes.slice().buffer } : { type: "module", module: m });
+    pushParams();
+    sendTransport();
+    await ctx.resume();
+    document.getElementById("start").hidden = true;
+  })().catch(err => {
+    audioReady = null;
+    const b = document.getElementById("start");
+    b.hidden = false;
+    b.textContent = "Audio could not start: " + err.message + ". Tap to try again.";
+  });
+  return audioReady;
+}
+function sendTransport() {
+  if (node) node.port.postMessage({ type: "transport", bpm_x10: transport.bpm * 10, playing: transport.playing, metro: transport.metro });
+}
+
+// ---------------------------------------------------------------- notes
+const slots = new Array(8).fill(null);   // the key each voice slot holds
+let slotAge = new Array(8).fill(0), ageCounter = 0, noteSerial = 0;
+let octave = 0;
+const held = new Set();
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const noteName = m => NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
+function incOf(midi) { return Math.round(440 * Math.pow(2, (midi - 69) / 12) / 44100 * 4294967296) >>> 0; }
+
+async function noteOn(midi) {
+  if (held.has(midi)) return;
+  await ensureAudio();
+  if (!node) return;
+  held.add(midi);
+  let slot = slots.indexOf(null);
+  if (slot < 0) { slot = slotAge.indexOf(Math.min(...slotAge)); released(slots[slot], true); }
+  slots[slot] = midi; slotAge[slot] = ++ageCounter; noteSerial++;
+  node.port.postMessage({ type: "on", slot, inc: incOf(midi), key: midi });
+  drawKeys(); drawRoles();
+}
+function noteOff(midi) {
+  if (!held.has(midi)) return;
+  held.delete(midi);
+  released(midi, false);
+  drawKeys(); drawRoles();
+}
+function released(midi, stolen) {
+  const slot = slots.indexOf(midi);
+  if (slot < 0) return;
+  slots[slot] = null;
+  if (!stolen && node) node.port.postMessage({ type: "off", slot });
+  if (stolen) held.delete(midi);
+}
+function releaseAll() { [...held].forEach(noteOff); }
+
+// ---------------------------------------------------------------- the keyboard (from F, as the OP-XY's)
+const keysEl = document.getElementById("keys");
+const KEYMAP = "awsedrfgyhujkolp;".split("");
+let latch = true;
+function baseMidi() { return 41 + octave * 12; }   // F2
+function buildKeys() {
+  keysEl.innerHTML = "";
+  const whites = [];
+  for (let i = 0; i < 24; i++) {
+    const m = baseMidi() + i, black = [1, 3, 6, 8, 10].includes(m % 12);
+    if (!black) whites.push(m);
+  }
+  const w = 100 / whites.length;
+  for (let i = 0; i < 24; i++) {
+    const m = baseMidi() + i, black = [1, 3, 6, 8, 10].includes(m % 12);
+    const el = document.createElement("div");
+    el.className = "key " + (black ? "b" : "w");
+    el.dataset.midi = m;
+    el.setAttribute("role", "button");
+    el.setAttribute("aria-label", noteName(m));
+    if (black) {
+      const left = whites.indexOf(m - 1);
+      el.style.left = `calc(${(left + 1) * w}% - ${w * 0.32}%)`; el.style.width = `${w * 0.64}%`;
+    } else {
+      const idx = whites.indexOf(m);
+      el.style.left = `${idx * w}%`; el.style.width = `${w}%`;
+    }
+    el.textContent = m % 12 === 0 ? noteName(m) : (KEYMAP[i] || "");
+    keysEl.appendChild(el);
+  }
+  drawKeys();
+}
+function drawKeys() { keysEl.querySelectorAll(".key").forEach(k => k.classList.toggle("on", held.has(+k.dataset.midi))); }
+keysEl.addEventListener("pointerdown", e => {
+  const k = e.target.closest(".key"); if (!k) return;
+  e.preventDefault();
+  const m = +k.dataset.midi;
+  if (latch) { held.has(m) ? noteOff(m) : noteOn(m); return; }
+  k.setPointerCapture(e.pointerId);
+  noteOn(m);
+  const up = () => { noteOff(m); k.removeEventListener("pointerup", up); k.removeEventListener("pointercancel", up); };
+  k.addEventListener("pointerup", up); k.addEventListener("pointercancel", up);
+});
+addEventListener("keydown", e => {
+  if (e.repeat || e.metaKey || e.ctrlKey || e.target.closest("input,select")) return;
+  const i = KEYMAP.indexOf(e.key.toLowerCase()); if (i < 0) return;
+  const m = baseMidi() + i;
+  if (latch) { held.has(m) ? noteOff(m) : noteOn(m); } else noteOn(m);
+});
+addEventListener("keyup", e => {
+  if (latch) return;
+  const i = KEYMAP.indexOf(e.key.toLowerCase()); if (i >= 0) noteOff(baseMidi() + i);
+});
+const latchBtn = document.getElementById("latch");
+latchBtn.onclick = () => { latch = !latch; latchBtn.setAttribute("aria-pressed", latch); if (!latch) releaseAll(); };
+document.getElementById("up").onclick = () => { releaseAll(); octave = Math.min(2, octave + 1); buildKeys(); };
+document.getElementById("down").onclick = () => { releaseAll(); octave = Math.max(-1, octave - 1); buildKeys(); };
+document.getElementById("clear").onclick = () => { stopDemo(); releaseAll(); };
+
+const ROLE_NAMES = ["foundation", "counter", "high", "highest"];
+function drawRoles() {
+  const order = slots.map((m, s) => ({ m, s, age: slotAge[s] })).filter(x => x.m !== null).sort((a, b) => a.age - b.age);
+  document.getElementById("roles").innerHTML = order.length
+    ? order.map((x, i) => `<span>key ${i + 1} <i>${noteName(x.m)}</i> · ${ROLE_NAMES[Math.min(3, i)]}</span>`).join("")
+    : "<span>No keys held. Latch is on: tap keys to add them, tap again to release.</span>";
+}
+
+// ---------------------------------------------------------------- encoders
+const encEl = document.getElementById("encoders");
+let page = 0;
+const encoders = [];
+function fmtValue(i) { return i === 0 ? algoName(values[0]) : Math.round(values[i] * 100).toString(); }
+function buildEncoders() {
+  for (let row = 0; row < 2; row++) {
+    const lab = document.createElement("div");
+    lab.className = "page-label" + (row === page ? " on" : "");
+    lab.textContent = row === 0 ? "page 1" : "page 2";
+    encEl.appendChild(lab);
+    for (let col = 0; col < 4; col++) {
+      const i = row * 4 + col, c = CONTROLS[i];
+      const el = document.createElement("div");
+      el.className = "enc"; el.tabIndex = 0;
+      el.setAttribute("role", "slider"); el.setAttribute("aria-label", c.id);
+      el.innerHTML = `<svg viewBox="-27 -27 54 54" aria-hidden="true">
+        <circle r="21" fill="#141417" stroke="#2c2c31"/>
+        <path class="arc" fill="none" stroke-width="2.4" stroke-linecap="round"/>
+        <line class="tick" x1="0" y1="-7" x2="0" y2="-17" stroke="#e8e8ea" stroke-width="2" stroke-linecap="round"/>
+      </svg><div class="name">${c.id}</div><div class="val"></div><div class="what">${c.what}</div>`;
+      encEl.appendChild(el);
+      encoders.push(el);
+      let startY = 0, startV = 0;
+      el.addEventListener("pointerdown", e => {
+        el.setPointerCapture(e.pointerId); startY = e.clientY; startV = values[i];
+        setPage(row);
+        const move = ev => {
+          const d = (startY - ev.clientY) / 180;
+          if (c.enumLabels) setValue(i, Math.min(0.999, Math.max(0, startV + d * 1.2)), true);
+          else setValue(i, Math.min(1, Math.max(0, startV + d)));
+        };
+        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); };
+        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+      });
+      el.addEventListener("dblclick", () => setValue(i, c.def));
+      el.addEventListener("keydown", e => {
+        const step = c.enumLabels ? 1 / 60 : (e.shiftKey ? 0.01 : 0.05);
+        if (e.key === "ArrowUp" || e.key === "ArrowRight") { setValue(i, Math.min(c.enumLabels ? 0.999 : 1, values[i] + step), true); e.preventDefault(); }
+        if (e.key === "ArrowDown" || e.key === "ArrowLeft") { setValue(i, Math.max(0, values[i] - step), true); e.preventDefault(); }
+      });
+      el.addEventListener("wheel", e => { e.preventDefault(); setValue(i, Math.min(c.enumLabels ? 0.999 : 1, Math.max(0, values[i] - Math.sign(e.deltaY) * (c.enumLabels ? 1 / 60 : 0.02))), true); }, { passive: false });
+    }
+  }
+  drawEncoders();
+}
+function setValue(i, v, snapEnum) {
+  if (CONTROLS[i].enumLabels && snapEnum) v = (Math.min(59, Math.floor(v * 60)) + 0.5) / 60;
+  values[i] = v;
+  drawEncoders(); pushParams();
+}
+function setPage(p) {
+  page = p;
+  encEl.querySelectorAll(".page-label").forEach((l, r) => l.classList.toggle("on", r === page));
+  if (screenWasm) screenWasm.bd_page(page);
+}
+function arc(v) {
+  const a0 = -135, a1 = -135 + 270 * v, r = 24;
+  const p = a => [Math.sin(a * Math.PI / 180) * r, -Math.cos(a * Math.PI / 180) * r];
+  const [x0, y0] = p(a0), [x1, y1] = p(a1);
+  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
+}
+function drawEncoders() {
+  encoders.forEach((el, i) => {
+    const v = values[i];
+    el.querySelector(".arc").setAttribute("d", arc(Math.max(0.002, v)));
+    el.querySelector(".arc").setAttribute("stroke", i === 0 ? "#e8e8ea" : (i % 2 ? "#ff2a2a" : "#2f6bff"));
+    el.querySelector(".tick").setAttribute("transform", `rotate(${-135 + 270 * v})`);
+    el.querySelector(".val").textContent = fmtValue(i);
+    el.setAttribute("aria-valuetext", fmtValue(i));
+    el.setAttribute("aria-valuenow", Math.round(v * 100));
+  });
+}
+
+// ---------------------------------------------------------------- presets
+const presetEl = document.getElementById("preset");
+PRESETS.forEach((p, i) => { const o = document.createElement("option"); o.value = i; o.textContent = p.name + " · " + p.algo; presetEl.appendChild(o); });
+presetEl.onchange = () => { const p = PRESETS[+presetEl.value]; p.values.forEach((v, i) => values[i] = v); drawEncoders(); pushParams(); };
+
+// ---------------------------------------------------------------- transport
+const seqBtn = document.getElementById("seq"), clickBtn = document.getElementById("click");
+seqBtn.onclick = async () => { await ensureAudio(); transport.playing = !transport.playing; seqBtn.setAttribute("aria-pressed", transport.playing); sendTransport(); };
+clickBtn.onclick = async () => { await ensureAudio(); transport.metro = !transport.metro; clickBtn.setAttribute("aria-pressed", transport.metro); if (transport.metro && !transport.playing) seqBtn.click(); sendTransport(); };
+const bpmEl = document.getElementById("bpm"), bpmOut = document.getElementById("bpmv");
+bpmEl.oninput = () => { transport.bpm = +bpmEl.value; bpmOut.textContent = bpmEl.value; sendTransport(); };
+document.getElementById("start").onclick = async () => { await ensureAudio(); if (!held.size) noteOn(48); };
+
+// the demo: keys arrive one by one, a bar apart at a time, then the algorithm moves on
+let demo = null;
+const demoBtn = document.getElementById("demo");
+function stopDemo() { if (demo) { clearInterval(demo.timer); demo = null; demoBtn.setAttribute("aria-pressed", "false"); } }
+demoBtn.onclick = async () => {
+  if (demo) { stopDemo(); releaseAll(); return; }
+  await ensureAudio();
+  releaseAll();
+  demoBtn.setAttribute("aria-pressed", "true");
+  const chord = [48, 55, 60, 63, 67];
+  demo = { step: 0 };
+  const advance = () => {
+    const s = demo.step++;
+    const k = s % 6;
+    if (k === 0) { releaseAll(); if (s) setValue(0, ((Math.floor(values[0] * 5) + 1) % 5 + 0.5) / 5, false); noteOn(chord[0]); }
+    else if (k < 5) noteOn(chord[k]);
+  };
+  advance();
+  demo.timer = setInterval(advance, 60000 / transport.bpm * 4 * 2);
+};
+
+// ---------------------------------------------------------------- a sample to salvage
+const KIND_NAMES = ["low hit", "snap hit", "click hit", "blip hit", "tone loop", "noise loop"];
+const sampleName = document.getElementById("sampleName"), harvestEl = document.getElementById("harvest");
+const sampleClear = document.getElementById("sampleClear"), sampleCard = document.getElementById("sampleCard");
+let lastSample = null;
+async function loadSample(file) {
+  if (!file) return;
+  sampleName.textContent = `${file.name}: reading…`;
+  try {
+    await ensureAudio();
+    const buf = await ctx.decodeAudioData(await file.arrayBuffer());
+    const channels = Math.min(2, buf.numberOfChannels), frames = Math.min(buf.length, 882000);
+    const pcm = new Int16Array(frames * channels);
+    for (let c = 0; c < channels; c++) {
+      const x = buf.getChannelData(c);
+      for (let i = 0; i < frames; i++) pcm[i * channels + c] = Math.max(-32768, Math.min(32767, Math.round(x[i] * 32767)));
+    }
+    lastSample = { name: file.name, frames, rate: buf.sampleRate, channels };
+    if (screenWasm) screenWasm.bd_overview(frames, buf.sampleRate);   // the screen: a sample is loaded
+    sampleName.textContent = `${file.name}: analysing…`;
+    node.port.postMessage({ type: "sample", pcm, frames, rate: buf.sampleRate, channels });
+  } catch (err) {
+    sampleName.textContent = `${file.name}: couldn't be read (${err.message || err})`;
+  }
+}
+function showHarvest(d) {
+  if (!lastSample) { harvestEl.innerHTML = ""; return; }
+  const rate = lastSample.rate;
+  if (d.count < 0) { sampleName.textContent = `${lastSample.name}: couldn't be analysed`; harvestEl.innerHTML = ""; return; }
+  const kinds = [[], [], [], [], [], []];
+  for (const [k, start, len, period] of d.harvest) if (k < 6) kinds[k].push({ start, len, period });
+  const at = s => `${(s.start / rate).toFixed(2)} s ` + (s.period ? `(${Math.round(rate / s.period)} Hz)` : `(${Math.round(s.len / rate * 1000)} ms)`);
+  const rows = [["low", 0, 4], ["snap", 1, 5], ["click", 2, 5], ["blip", 3, 4]].map(([lane, hit, loop]) => {
+    const k = kinds[hit].length ? hit : kinds[loop].length ? loop : -1;
+    const what = k < 0 ? "its own synthesis: nothing suitable found" : `${KIND_NAMES[k]}${kinds[k].length > 1 ? "s" : ""} at ${kinds[k].map(at).join(", ")}`;
+    return `<div><b>${lane}</b> ${what}</div>`;
+  });
+  // loops a lane plays only when it has no hit: trim the sample to them on the OP-XY
+  const loops = [4, 5].filter(k => kinds[k].length).map(k => `${KIND_NAMES[k]}${kinds[k].length > 1 ? "s" : ""} at ${kinds[k].map(at).join(", ")}`);
+  if (loops.length) rows.push(`<div><b>loops</b> ${loops.join("; ")}: played where a lane finds no hit</div>`);
+  harvestEl.innerHTML = rows.join("");
+  sampleName.textContent = `${lastSample.name} · ${(lastSample.frames / rate).toFixed(2)} s · ${d.count} snippet${d.count === 1 ? "" : "s"} salvaged`;
+  sampleClear.hidden = false;
+}
+document.getElementById("sampleFile").addEventListener("change", e => loadSample(e.target.files[0]));
+sampleClear.addEventListener("click", () => {
+  lastSample = null;
+  if (screenWasm) screenWasm.bd_overview(0, 0);
+  if (node) node.port.postMessage({ type: "sample", frames: 0 });
+  harvestEl.innerHTML = "";
+  sampleClear.hidden = true;
+  sampleName.textContent = "No sample: every lane plays its own synthesis.";
+});
+sampleCard.addEventListener("dragover", e => { e.preventDefault(); sampleCard.classList.add("over"); });
+sampleCard.addEventListener("dragleave", () => sampleCard.classList.remove("over"));
+sampleCard.addEventListener("drop", e => { e.preventDefault(); sampleCard.classList.remove("over"); loadSample(e.dataTransfer.files[0]); });
+
+// ---------------------------------------------------------------- telemetry from the engine
+const clusterGlow = [0, 0, 0, 0];
+const sparks = [];
+const logLines = [];
+let hitIndex = 0, strikes = 0, lastHitAt = new Array(4).fill(0), burst = 0;
+function onTelemetry(d) {
+  if (d.harvest) { showHarvest(d); return; }
+  transport.song = d.song; strikes = d.strikes;
+  const now = performance.now();
+  for (const [slot, rank, lane, vel, key] of d.hits) {
+    const red = lane < 2;
+    const c = red ? (rank % 2 ? 2 : 0) : (rank % 2 ? 3 : 1);
+    clusterGlow[c] = Math.min(1.6, Math.max(clusterGlow[c], 0.45 + vel * 1.2));
+    if (now - lastHitAt[lane] < 70) burst = Math.min(1, burst + 0.35);
+    lastHitAt[lane] = now;
+    sparks.push({ c, life: 1, seed: Math.random(), lane, vel });
+    if (sparks.length > 220) sparks.shift();
+    streakPackets.push({ line: (lane + rank * 2) % STREAKS.length, t: 0, speed: 0.6 + Math.random() * 0.9, len: 0.02 + vel * 0.06, red });
+    if (streakPackets.length > 80) streakPackets.shift();
+    glyphRows.unshift({ w: 4 + vel * 40 + Math.random() * 12, red, t: now });
+    if (glyphRows.length > 40) glyphRows.pop();
+    const lanes = ["low  ", "snap ", "click", "blip "];
+    logLines.unshift(`${(++hitIndex & 0xffff).toString(16).padStart(4, "0")}  r${rank}  ${lanes[lane]}  ${"▮".repeat(Math.max(1, Math.round(vel * 6))).padEnd(6, "▯")}  ${noteName(key)}`);
+    if (logLines.length > 7) logLines.pop();
+  }
+}
+
+// ---------------------------------------------------------------- the scan: a point-cloud brain
+function rngOf(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function ell(x, y, z, c, r) { const a = (x - c[0]) / r[0], b = (y - c[1]) / r[1], d = (z - c[2]) / r[2]; return Math.sqrt(a * a + b * b + d * d) - 1; }
+function parts(x, y, z) {
+  const folds = 0.045 * Math.sin(23 * x + 3) * Math.sin(19 * y + 1) * Math.sin(17 * z + 2);
+  let cer = Infinity;
+  for (const side of [-1, 1]) {
+    cer = Math.min(cer, ell(x, y, z, [0, 0.08, side * 0.2], [0.62, 0.40, 0.27]) + folds, ell(x, y, z, [0.08, -0.16, side * 0.27], [0.34, 0.17, 0.15]) + folds);
+  }
+  if (Math.abs(z) < 0.025 && y > 0.1) cer += 0.08;
+  if (y < -0.18) cer += (-0.18 - y) * 2.2;
+  const cb = ell(x, y, z, [-0.43, -0.27, 0], [0.21, 0.13, 0.33]) + 0.02 * Math.sin(60 * y);
+  const t = Math.min(1, Math.max(0, (y + 0.2) / -0.52)), ax = -0.17 - 0.06 * t;
+  let st = Math.hypot(x - ax, z) / 0.075 - 1;
+  if (!(y < -0.15 && y > -0.74)) st = 5;
+  return [cer, cb, st];
+}
+const CLUSTERS = [[0.3, 0.27, 0.24], [-0.27, 0.22, 0.25], [0.04, -0.03, 0.06], [0.32, 0.04, -0.27]];
+const CLUSTER_RED = [true, false, true, false];
+const brain = (() => {
+  const rnd = rngOf(11);
+  const buckets = { cer: [], cb: [], st: [], inner: [] };
+  for (let n = 0; n < 420000; n++) {
+    const x = -0.72 + rnd() * 1.44, y = -0.78 + rnd() * 1.33, z = -0.55 + rnd() * 1.1;
+    const [a, b, c] = parts(x, y, z), u = Math.min(a, b, c);
+    if (Math.abs(u) < 0.016) (u === a ? buckets.cer : u === b ? buckets.cb : buckets.st).push(x, y, z);
+    else if (a < -0.2) {
+      // inner structures: shells at half size, as a scan shows the ventricles and thalamus
+      const inner = Math.min(ell(x, y, z, [0.02, 0.02, 0.09], [0.26, 0.12, 0.07]), ell(x, y, z, [0.02, 0.02, -0.09], [0.26, 0.12, 0.07]), ell(x, y, z, [-0.05, -0.06, 0], [0.12, 0.08, 0.16]));
+      if (Math.abs(inner) < 0.05) buckets.inner.push(x, y, z);
+    }
+  }
+  const take = (arr, n) => { const out = []; const count = arr.length / 3; for (let i = 0; i < n && count; i++) { const j = Math.floor(rnd() * count) * 3; out.push(arr[j], arr[j + 1], arr[j + 2]); } return out; };
+  const pts = [...take(buckets.cer, 3600), ...take(buckets.cb, 760), ...take(buckets.st, 180), ...take(buckets.inner, 700)];
+  const n = pts.length / 3;
+  const P = new Float32Array(pts), kind = new Int8Array(n).fill(-1);
+  // the clusters: each point's nearest cluster, if near enough
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < 4; c++) {
+      const d = Math.hypot(P[3 * i] - CLUSTERS[c][0], P[3 * i + 1] - CLUSTERS[c][1], P[3 * i + 2] - CLUSTERS[c][2]);
+      if (d < (c === 2 ? 0.1 : 0.12)) kind[i] = c;
+    }
+  }
+  // the web: each of a share of points joined to a near neighbour, through a grid
+  const cell = 0.07, grid = new Map(), key = (a, b, c) => a + "," + b + "," + c;
+  for (let i = 0; i < n; i++) {
+    const k = key(Math.floor(P[3 * i] / cell), Math.floor(P[3 * i + 1] / cell), Math.floor(P[3 * i + 2] / cell));
+    if (!grid.has(k)) grid.set(k, []); grid.get(k).push(i);
+  }
+  const edges = [];
+  for (let i = 0; i < n; i++) {
+    if (rnd() > (kind[i] >= 0 ? 0.9 : 0.42)) continue;
+    const gx = Math.floor(P[3 * i] / cell), gy = Math.floor(P[3 * i + 1] / cell), gz = Math.floor(P[3 * i + 2] / cell);
+    let best = -1, bd = 1e9, second = -1, sd = 1e9;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      const list = grid.get(key(gx + a, gy + b, gz + c)); if (!list) continue;
+      for (const j of list) {
+        if (j === i) continue;
+        const d = Math.hypot(P[3 * i] - P[3 * j], P[3 * i + 1] - P[3 * j + 1], P[3 * i + 2] - P[3 * j + 2]);
+        if (d < bd) { second = best; sd = bd; best = j; bd = d; } else if (d < sd) { second = j; sd = d; }
+      }
+    }
+    if (best >= 0 && bd > 0.012) edges.push(i, best);
+    if (second >= 0 && rnd() < 0.35) edges.push(i, second);
+  }
+  const members = [[], [], [], []];
+  for (let i = 0; i < n; i++) if (kind[i] >= 0) members[kind[i]].push(i);
+  return { P, n, kind, edges: new Uint16Array(edges), members };
+})();
+
+// the streaks: long thin lines crossing the scan, as in the picture, and data packets running along them
+const STREAKS = [[-0.05, 0.72, 1.05, 0.18], [0.1, 0.9, 1.05, 0.42], [-0.05, 0.55, 0.62, 0.3], [0.3, 0.98, 1.05, 0.66], [0.45, 0.25, 1.05, 0.09], [-0.05, 0.85, 0.8, 0.62]];
+const streakPackets = [];
+const glyphRows = [];
+
+const scanCanvas = document.getElementById("scan");
+const sctx = scanCanvas.getContext("2d");
+const scene = document.createElement("canvas"), gctx = scene.getContext("2d");
+const proj = { x: new Float32Array(brain.n), y: new Float32Array(brain.n), z: new Float32Array(brain.n) };
+let angle = 0.6, pace = 0, ringTurn = 0, tear = 0, tearY = 0, tearDx = 0;
+let W = 0, H = 0, dpr = 1;
+function resize() {
+  dpr = Math.min(2, devicePixelRatio || 1);
+  const r = scanCanvas.getBoundingClientRect();
+  W = r.width; H = r.height;
+  scanCanvas.width = Math.round(W * dpr); scanCanvas.height = Math.round(H * dpr);
+}
+addEventListener("resize", resize);
+
+function drawScan(dt) {
+  const keys = held.size;
+  pace += ((keys ? 1 : 0) - pace) * Math.min(1, dt * (keys ? 3 : 0.8));
+  const chaos = values[2], glitch = values[3], tone = values[4], ring = values[6], crush = values[7];
+  const algo = Math.min(5, Math.floor(values[0] * 6));   // the algorithm; its variant is the step within it
+  if (!reduced) angle += dt * (0.07 + pace * (0.18 + chaos * 0.5 + keys * 0.05));
+  let shown = angle;
+  if (algo === 1) shown -= shown % (Math.PI / 24);
+  else if (algo === 2) shown -= shown % (Math.PI / 12);
+
+  // crush: the scene drawn small and blown up, pixel for pixel
+  const f = crush < 0.04 ? 1 : 1 + Math.round(crush * 7);
+  const sw = Math.max(1, Math.round(W * dpr / f)), sh = Math.max(1, Math.round(H * dpr / f));
+  if (scene.width !== sw || scene.height !== sh) { scene.width = sw; scene.height = sh; }
+  const g = gctx, s = dpr / f;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = "#050506"; g.fillRect(0, 0, sw, sh);
+  g.setTransform(s, 0, 0, s, 0, 0);
+
+  // streaks
+  g.lineWidth = 0.7;
+  STREAKS.forEach((l, i) => {
+    g.strokeStyle = `rgba(200,200,210,${0.08 + 0.05 * Math.sin(i * 1.7 + angle * 3)})`;
+    g.beginPath(); g.moveTo(l[0] * W, l[1] * H); g.lineTo(l[2] * W, l[3] * H); g.stroke();
+  });
+  for (let i = streakPackets.length - 1; i >= 0; i--) {
+    const p = streakPackets[i], l = STREAKS[p.line];
+    p.t += dt * p.speed * (transport.bpm / 120);
+    if (p.t > 1.1) { streakPackets.splice(i, 1); continue; }
+    const t0 = Math.max(0, p.t - p.len), t1 = Math.min(1, p.t);
+    const x0 = (l[0] + (l[2] - l[0]) * t0) * W, y0 = (l[1] + (l[3] - l[1]) * t0) * H;
+    const x1 = (l[0] + (l[2] - l[0]) * t1) * W, y1 = (l[1] + (l[3] - l[1]) * t1) * H;
+    g.strokeStyle = p.red ? "rgba(255,90,90,0.75)" : "rgba(120,160,255,0.75)";
+    g.lineWidth = 1.1; g.setLineDash([3, 2]);
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    g.setLineDash([]);
+  }
+  // glyph columns at the right edge
+  const gx = W - Math.min(150, W * 0.17);
+  for (let r = 0; r < glyphRows.length; r++) {
+    const row = glyphRows[r], y = H * 0.12 + r * 7;
+    if (y > H * 0.78) break;
+    const age = (performance.now() - row.t) / 1000;
+    g.fillStyle = r === 0 ? (row.red ? "rgba(255,60,60,0.9)" : "rgba(90,140,255,0.9)") : `rgba(210,210,220,${Math.max(0.12, 0.55 - age * 0.15)})`;
+    g.fillRect(gx + ((r * 37) % 23), y, row.w, 1.3);
+    g.fillRect(gx + 60 + ((r * 53) % 17), y + 3, row.w * 0.4, 1);
+  }
+
+  // the brain
+  const cx = W * (W > 700 ? 0.46 : 0.5), cy = H * 0.52, size = Math.min(W * 0.5, H * 0.82);
+  const ca = Math.cos(shown), sa = Math.sin(shown), tilt = -0.2, ct = Math.cos(tilt), st = Math.sin(tilt);
+  const P = brain.P;
+  const tearOn = tear > 0;
+  for (let i = 0; i < brain.n; i++) {
+    const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2];
+    const rx = x * ca + z * sa, rz = -x * sa + z * ca;
+    const ry = y * ct - rz * st, rz2 = y * st + rz * ct;
+    const k = 2.6 / (2.6 - rz2);
+    let px = cx + rx * k * size, py = cy - ry * k * size;
+    if (tearOn && py > tearY && py < tearY + H * 0.06) px += tearDx;
+    proj.x[i] = px; proj.y[i] = py; proj.z[i] = rz2;
+  }
+  // the web
+  const E = brain.edges;
+  for (let pass = 0; pass < 2; pass++) {
+    g.beginPath();
+    for (let e = 0; e < E.length; e += 2) {
+      const a = E[e], b = E[e + 1];
+      if ((proj.z[a] + proj.z[b] > 0) !== (pass === 1)) continue;
+      g.moveTo(proj.x[a], proj.y[a]); g.lineTo(proj.x[b], proj.y[b]);
+    }
+    g.strokeStyle = pass ? "rgba(225,225,232,0.22)" : "rgba(225,225,232,0.08)";
+    g.lineWidth = 0.5; g.stroke();
+  }
+  // the points, by depth
+  const dot = 1.15 + tone * 0.9;
+  for (let bucket = 0; bucket < 5; bucket++) {
+    g.beginPath();
+    for (let i = 0; i < brain.n; i++) {
+      if (brain.kind[i] >= 0) continue;
+      const d = Math.min(4, Math.max(0, Math.floor((proj.z[i] + 0.5) * 5)));
+      if (d !== bucket) continue;
+      g.rect(proj.x[i] - dot / 2, proj.y[i] - dot / 2, dot, dot);
+    }
+    g.fillStyle = `rgba(232,232,238,${[0.22, 0.36, 0.52, 0.72, 0.95][bucket]})`;
+    g.fill();
+  }
+  // twinkles: grey neurons catching, more with glitch
+  if (keys) {
+    g.fillStyle = "rgba(255,255,255,0.9)";
+    const n = Math.round(4 + glitch * 30 + keys * 4);
+    for (let j = 0; j < n; j++) { const i = (Math.random() * brain.n) | 0; g.fillRect(proj.x[i] - 1, proj.y[i] - 1, 2, 2); }
+  }
+  // the clusters
+  g.globalCompositeOperation = "lighter";
+  for (let c = 0; c < 4; c++) {
+    const glow = clusterGlow[c], m = brain.members[c];
+    const rgb = CLUSTER_RED[c] ? "255,42,42" : "47,107,255";
+    let sx = 0, sy = 0;
+    g.beginPath();
+    for (const i of m) { const r = dot * (1.2 + Math.min(1, glow) * 0.9); g.rect(proj.x[i] - r / 2, proj.y[i] - r / 2, r, r); sx += proj.x[i]; sy += proj.y[i]; }
+    g.fillStyle = `rgba(${rgb},${0.55 + Math.min(1, glow) * 0.45})`;
+    g.fill();
+    if (glow > 0.02 && m.length) {
+      const mx = sx / m.length, my = sy / m.length, rad = size * (0.06 + glow * 0.08);
+      const grad = g.createRadialGradient(mx, my, 0, mx, my, rad);
+      grad.addColorStop(0, `rgba(${rgb},${0.38 * Math.min(1, glow)})`); grad.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = grad; g.fillRect(mx - rad, my - rad, rad * 2, rad * 2);
+    }
+    clusterGlow[c] = Math.max(0, glow - dt * (2.2 - tone * 1.4));
+  }
+  // sparks: a hit fires out from its cluster along the web
+  g.lineWidth = 0.8;
+  for (let k = sparks.length - 1; k >= 0; k--) {
+    const sp = sparks[k];
+    sp.life -= dt * (3.2 - tone * 1.6);
+    if (sp.life <= 0) { sparks.splice(k, 1); continue; }
+    const m = brain.members[sp.c]; if (!m.length) continue;
+    const a = m[Math.floor(sp.seed * m.length)], b = Math.floor(((sp.seed * 9301 + 49297) % 1) * brain.n);
+    const t = 1 - sp.life;
+    const x = proj.x[a] + (proj.x[b] - proj.x[a]) * t, y = proj.y[a] + (proj.y[b] - proj.y[a]) * t;
+    g.strokeStyle = CLUSTER_RED[sp.c] ? `rgba(255,120,120,${sp.life * 0.7})` : `rgba(130,170,255,${sp.life * 0.7})`;
+    g.beginPath(); g.moveTo(proj.x[a], proj.y[a]); g.lineTo(x, y); g.stroke();
+    g.fillStyle = `rgba(255,255,255,${sp.life})`; g.fillRect(x - 1, y - 1, 2, 2);
+  }
+  g.globalCompositeOperation = "source-over";
+  // the ring: an orbit at the key
+  if (ring > 0.02) {
+    if (!reduced) ringTurn += dt * (0.4 + pace);
+    const rr = size * (0.62 + ring * 0.12), lift = clusterGlow[0] * 0.05;
+    g.strokeStyle = `rgba(230,230,240,${0.12 + ring * 0.45 + lift})`; g.lineWidth = 0.8;
+    g.beginPath();
+    for (let k = 0; k <= 96; k++) {
+      const a = k / 96 * Math.PI * 2, x = Math.cos(a) * 0.62, z = Math.sin(a) * 0.62, y = Math.sin(a + ringTurn) * 0.08;
+      const rx = x * Math.cos(shown * 0.5) + z * Math.sin(shown * 0.5), rz = -x * Math.sin(shown * 0.5) + z * Math.cos(shown * 0.5);
+      const ry = y * ct - rz * st, rz2 = y * st + rz * ct, kk = 2.6 / (2.6 - rz2);
+      const px = cx + rx * kk * rr / 0.62 * (0.62), py = cy - ry * kk * size - size * 0.04;
+      k ? g.lineTo(px, py) : g.moveTo(px, py);
+    }
+    g.stroke();
+  }
+
+  // onto the screen, torn now and then
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.imageSmoothingEnabled = f === 1;
+  sctx.drawImage(scene, 0, 0, scanCanvas.width, scanCanvas.height);
+  if (tear > 0) {
+    tear--;
+    const y = Math.round(tearY * dpr), h = Math.round(H * 0.06 * dpr);
+    sctx.drawImage(scanCanvas, 0, y, scanCanvas.width, h, Math.round(tearDx * 2 * dpr), y, scanCanvas.width, h);
+  } else if (keys && !reduced && Math.random() < glitch * glitch * 0.06 + burst * 0.25) {
+    tear = 1 + ((Math.random() * 3) | 0); tearY = Math.random() * H * 0.85; tearDx = (Math.random() - 0.5) * 40 * (0.3 + glitch);
+  }
+  burst = Math.max(0, burst - dt * 4);
+}
+
+// ---------------------------------------------------------------- the OP-XY screen, from display.cpp's frames
+const scr = document.getElementById("screen"), xctx = scr.getContext("2d");
+scr.addEventListener("click", () => setPage(page ? 0 : 1));
+const HEADER_GREYS = ["#000000", "#323232", "#4B4B4B", "#646464", "#7D7D7D", "#969696", "#AFAFAF", "#CDCDCD"];
+function drawScreen(elapsed) {
+  if (!screenWasm) return;
+  const ex = screenWasm;
+  ex.bd_display(Math.min(102, Math.round(elapsed * 1024)), held.size, noteSerial, reduced ? 1 : 0);
+  const buf = ex.memory.buffer, base = ex.bd_frame();
+  const nodes = new Int32Array(buf, base + ex.bd_nodes_offset(), ex.bd_frame_nodes() * 7);
+  const pal = PANEL.palette, F = PANEL.first, U = 1024;
+  const c = xctx;
+  c.setTransform(2, 0, 0, 2, 0, 0);
+  c.fillStyle = "#000"; c.fillRect(0, 0, 480, 220);
+  const node = i => ({ x: nodes[7 * i] / U, y: nodes[7 * i + 1] / U, s: nodes[7 * i + 2] / U, cos: nodes[7 * i + 3] / U, sin: nodes[7 * i + 4] / U, shade: nodes[7 * i + 5] });
+  // the links, under the points: thin ribbons from their first point, turned and scaled
+  PANEL.links.forEach((len, e) => {
+    const nd = node(F.link + e); if (nd.x >= 640) return;
+    const L = len * nd.s, w = PANEL.width * nd.s;
+    c.save(); c.setTransform(2 * nd.cos, 2 * nd.sin, -2 * nd.sin, 2 * nd.cos, 2 * nd.x, 2 * nd.y);
+    c.fillStyle = pal[nd.shade]; c.fillRect(0, -w / 2, L, w); c.restore();
+  });
+  // the points
+  for (let i = 0; i < PANEL.points; i++) {
+    const nd = node(F.point + i); if (nd.x >= 640) continue;
+    c.fillStyle = pal[nd.shade];
+    c.beginPath(); c.arc(nd.x, nd.y, PANEL.radius * nd.s + 0.15, 0, Math.PI * 2); c.fill();
+  }
+  // with no sample, the hint in the corner (the device draws it from the artwork)
+  if (!lastSample) {
+    const [hx, hy] = PANEL.hint;
+    c.fillStyle = "#CBCBCB"; c.font = "300 15px Barlow, Helvetica, Arial, sans-serif"; c.fillText("load a sample", hx, hy);
+    c.fillStyle = "#7D7D7D"; c.font = "300 13px Barlow, Helvetica, Arial, sans-serif"; c.fillText("shift +", hx + 118, hy);
+    c.strokeStyle = "#7D7D7D"; c.lineWidth = 0.8; c.strokeRect(hx + 171.5, hy - 12.5, 15, 15);
+    c.beginPath(); c.arc(hx + 179, hy - 5, 4.8, 0, Math.PI * 2); c.stroke();
+  }
+  // the header: its bars and texts
+  c.fillStyle = "#000"; c.fillRect(0, 0, 480, 38);
+  for (let i = 0; i < 8; i++) { const nd = node(F.header + i); c.fillStyle = HEADER_GREYS[i]; c.fillRect(nd.x, nd.y, 60, 20); }
+  const texts = ex.bd_texts_offset(), tb = ex.bd_text_bytes();
+  const bytes = new Uint8Array(buf);
+  for (const [slot, fill, size] of PANEL.texts) {
+    const at = base + texts + slot * tb;
+    const t = new Int32Array(buf, at, 3);
+    let str = ""; for (let k = 0; k < 24; k++) { const ch = bytes[at + 12 + k]; if (!ch) break; str += String.fromCharCode(ch); }
+    if (!str) continue;
+    c.fillStyle = fill; c.font = `300 ${size * t[2] / U}px Barlow, Helvetica, Arial, sans-serif`;
+    c.fillText(str, t[0] / U, t[1] / U);
+  }
+}
+
+// ---------------------------------------------------------------- the loop
+const hud = document.getElementById("hud"), logEl = document.getElementById("log"), posEl = document.getElementById("pos");
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (scanCanvas.width === 0 || Math.abs(scanCanvas.getBoundingClientRect().width - W) > 1) resize();
+  drawScan(dt);
+  drawScreen(dt);
+  const keys = held.size;
+  const ranks = slots.map((m, s) => ({ m, age: slotAge[s] })).filter(x => x.m !== null).sort((a, b) => a.age - b.age);
+  hud.innerHTML = `<b>BRAIN DANCE</b> · op-xy sample engine<br>algo <b>${algoName(values[0])}</b> · ${transport.bpm.toFixed(1)} bpm · keys <b>${keys}</b><br>` +
+    `dense ${Math.round(values[1] * 100)} · chaos ${Math.round(values[2] * 100)} · glitch ${Math.round(values[3] * 100)}<br>` +
+    `<span class="r">■</span> low · snap  <span class="b">■</span> click · blip<br>hits ${strikes}${audioPath ? " · " + audioPath : ""}` +
+    (ranks.length ? `<br>${ranks.map((r, i) => noteName(r.m) + "/" + ROLE_NAMES[Math.min(3, i)]).join("  ")}` : "");
+  logEl.textContent = logLines.join("\n");
+  if (transport.playing) {
+    const q = transport.song / (44100 * 60 / transport.bpm);
+    posEl.textContent = `playing · bar ${Math.floor(q / 4) + 1} beat ${Math.floor(q % 4) + 1} · song position locked`;
+  } else posEl.textContent = "stopped · clock restarts on the first key";
+  requestAnimationFrame(frame);
+}
+
+buildKeys(); buildEncoders(); drawRoles();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

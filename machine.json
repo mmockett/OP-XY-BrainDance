@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "sdk": "1.17",
+  "kind": "sample",
+  "description": "Glitch beats on the project's tempo, tuned to the keys you hold: the more keys, the more complex. Builds its kit from a sample, or plays its own synthesis.",
+  "base": "sampler",
+  "presets": "presets",
+  "presetDefaults": {
+    "amp": {
+      "attack": 0,
+      "decay": 32767,
+      "sustain": 32767,
+      "release": 24000
+    }
+  }
+}
