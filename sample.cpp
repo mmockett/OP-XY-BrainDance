@@ -854,7 +854,10 @@ __attribute__((noinline)) static void warm(const Voice& v) {
 // Each adds its lane into the mix (Q24), left and right interleaved. A lane's
 // settings are read into locals for the stretch and written back after it: the
 // loops then hold them in registers, where the OP-XY is several times faster.
-struct Run { i32* mix; u32 n; };
+// set: the lane is the first to write this stretch of the buffer, so it writes
+// its samples outright, and the caller clears what is left of the stretch;
+// otherwise it adds to what is there. Each returns how many samples it wrote.
+struct Run { i32* mix; u32 n; bool set; };
 
 static inline bool gate(Lane& l) {   // after a sample: the hard gate, or the level's fall
     if (l.cut > 0 && --l.cut == 0) { l.amp = 0; return false; }
@@ -913,45 +916,87 @@ static inline i32 clip_noise(const Clip& c, u32& pos, u32 step) {
 }
 
 // Any lane playing a hit from the sample: once, to its end or the level's fall.
-__attribute__((noinline)) static void run_shot(Lane& l, Run r) {
+__attribute__((noinline)) static u32 run_shot(Lane& l, Run r) {
     const u32 end = (l.len - 1) << 16;
     const Clip c = clip_of(l);
-    for (u32 i = 0; i < r.n; ++i) {
+    u32 i = 0;
+    for (; i < r.n; ++i) {
         if (l.pos >= end) { l.amp = 0; break; }
         const i32 y = multiply(clip_read(c, l.pos, false), l.amp);
         l.pos += l.step;
-        r.mix[2 * i] += multiply(y, l.left);
-        r.mix[2 * i + 1] += multiply(y, l.right);
-        if (!gate(l)) break;
+        if (r.set) {
+            r.mix[2 * i] = multiply(y, l.left);
+            r.mix[2 * i + 1] = multiply(y, l.right);
+        } else {
+            r.mix[2 * i] += multiply(y, l.left);
+            r.mix[2 * i + 1] += multiply(y, l.right);
+        }
+        if (!gate(l)) { ++i; break; }
     }
+    return i;
 }
 
 // A lane's stretch (dry, Q24, before its level) into the mix at its level and
 // pan, the level falling a sample at a time. Each lane works its stretch out
 // into dry first and hands it here: short loops with few values live, which
 // the OP-XY keeps in its data registers.
-__attribute__((noinline)) static i32 mix_in(i32* mix, const i32* dry, u32 n, i32 amp, i32 dec, i32 left, i32 right) {
-    for (u32 i = 0; i < n; ++i) {
-        const i32 y = multiply(dry[i], amp);
-        mix[2 * i] += multiply(y, left);
-        mix[2 * i + 1] += multiply(y, right);
-        amp = multiply(amp, dec);
+__attribute__((noinline)) static i32 mix_in(i32* mix, const i32* dry, u32 n, i32 amp, i32 dec, i32 left, i32 right, bool set) {
+    if (right == 0x40000000) {
+        // The middle (the low lane's): the right side's gain is a half exactly, and a half is a shift.
+        if (set) {
+            for (u32 i = 0; i < n; ++i) {
+                const i32 y = multiply(dry[i], amp);
+                mix[2 * i] = multiply(y, left);
+                mix[2 * i + 1] = y >> 1;
+                amp = multiply(amp, dec);
+            }
+        } else {
+            for (u32 i = 0; i < n; ++i) {
+                const i32 y = multiply(dry[i], amp);
+                mix[2 * i] += multiply(y, left);
+                mix[2 * i + 1] += y >> 1;
+                amp = multiply(amp, dec);
+            }
+        }
+    } else if (set) {
+        for (u32 i = 0; i < n; ++i) {
+            const i32 y = multiply(dry[i], amp);
+            mix[2 * i] = multiply(y, left);
+            mix[2 * i + 1] = multiply(y, right);
+            amp = multiply(amp, dec);
+        }
+    } else {
+        for (u32 i = 0; i < n; ++i) {
+            const i32 y = multiply(dry[i], amp);
+            mix[2 * i] += multiply(y, left);
+            mix[2 * i + 1] += multiply(y, right);
+            amp = multiply(amp, dec);
+        }
     }
     return amp;
 }
 // The same with a second part already at its own level (the snap's body).
 __attribute__((noinline)) static i32 mix_in_with(i32* mix, const i32* dry, const i32* body, u32 n, i32 amp, i32 dec, i32 left,
-                                                 i32 right) {
-    for (u32 i = 0; i < n; ++i) {
-        const i32 y = multiply(dry[i], amp) + body[i];
-        mix[2 * i] += multiply(y, left);
-        mix[2 * i + 1] += multiply(y, right);
-        amp = multiply(amp, dec);
+                                                 i32 right, bool set) {
+    if (set) {
+        for (u32 i = 0; i < n; ++i) {
+            const i32 y = multiply(dry[i], amp) + body[i];
+            mix[2 * i] = multiply(y, left);
+            mix[2 * i + 1] = multiply(y, right);
+            amp = multiply(amp, dec);
+        }
+    } else {
+        for (u32 i = 0; i < n; ++i) {
+            const i32 y = multiply(dry[i], amp) + body[i];
+            mix[2 * i] += multiply(y, left);
+            mix[2 * i + 1] += multiply(y, right);
+            amp = multiply(amp, dec);
+        }
     }
     return amp;
 }
 
-__attribute__((noinline)) static void run_low(Lane& l, Run r) {
+__attribute__((noinline)) static u32 run_low(Lane& l, Run r) {
     bool ends;
     const u32 n = sounding(l, r.n, ends);
     i32 dry[frames];
@@ -993,11 +1038,12 @@ __attribute__((noinline)) static void run_low(Lane& l, Run r) {
     } else {
         for (u32 i = 0; i < n; ++i) dry[i] = sine(at[i]) << 9;
     }
-    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right);
+    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right, r.set);
     l.amp = ends ? 0 : amp;
+    return n;
 }
 
-__attribute__((noinline)) static void run_snap(Lane& l, u32& noise_state, Run r) {
+__attribute__((noinline)) static u32 run_snap(Lane& l, u32& noise_state, Run r) {
     bool ends;
     const u32 n = sounding(l, r.n, ends);
     i32 dry[frames], body[frames];
@@ -1032,9 +1078,9 @@ __attribute__((noinline)) static void run_snap(Lane& l, u32& noise_state, Run r)
     // the body, at its own falling level; once that is nothing, only its phase moves on
     if (!l.amp2) {
         l.phase2 += l.inc2 * n;
-        const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right);
+        const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right, r.set);
         l.amp = ends ? 0 : amp;
-        return;
+        return n;
     }
     {
         const u32 inc2 = l.inc2;
@@ -1049,11 +1095,12 @@ __attribute__((noinline)) static void run_snap(Lane& l, u32& noise_state, Run r)
         l.phase2 = phase2;
         l.amp2 = amp2;
     }
-    const i32 amp = mix_in_with(r.mix, dry, body, n, l.amp, l.dec, l.left, l.right);
+    const i32 amp = mix_in_with(r.mix, dry, body, n, l.amp, l.dec, l.left, l.right, r.set);
     l.amp = ends ? 0 : amp;
+    return n;
 }
 
-__attribute__((noinline)) static void run_click(Lane& l, u32& noise_state, Run r) {
+__attribute__((noinline)) static u32 run_click(Lane& l, u32& noise_state, Run r) {
     bool ends;
     const u32 n = sounding(l, r.n, ends);
     i32 dry[frames];
@@ -1094,11 +1141,12 @@ __attribute__((noinline)) static void run_click(Lane& l, u32& noise_state, Run r
             noise_state = noise;
         }
     }
-    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right);
+    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right, r.set);
     l.amp = ends ? 0 : amp;
+    return n;
 }
 
-__attribute__((noinline)) static void run_blip(Lane& l, Run r) {
+__attribute__((noinline)) static u32 run_blip(Lane& l, Run r) {
     bool ends;
     const u32 n = sounding(l, r.n, ends);
     i32 dry[frames];
@@ -1136,24 +1184,44 @@ __attribute__((noinline)) static void run_blip(Lane& l, Run r) {
         }
         l.phase = phase;
     }
-    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right);
+    const i32 amp = mix_in(r.mix, dry, n, l.amp, l.dec, l.left, l.right, r.set);
     l.amp = ends ? 0 : amp;
+    return n;
 }
 
-// The low lane into the mix; the others into aux, which joins the mix and feeds the space.
-static void run(Voice& v, i32* mix, i32* aux, u32 n) {
-    for (u32 k = 0; k < lane_count; ++k) {
-        Lane& l = v.lane[k];
-        if (l.amp <= 0) continue;
-        const Run r = {k == kLow ? mix : aux, n};
-        if (l.src == 1) { run_shot(l, r); continue; }
-        switch (k) {
-        case kLow: run_low(l, r); break;
-        case kSnap: run_snap(l, v.noise, r); break;
-        case kClick: run_click(l, v.noise, r); break;
-        default: run_blip(l, r); break;
+// A stretch of the block: the low lane into the mix; the others into aux, which
+// joins the mix and feeds the space. The low lane is the mix's only writer here,
+// so it writes it outright, and whatever of the stretch it leaves is cleared;
+// the same for the first of the others to sound into aux. used: aux is in use
+// this block, so a stretch with none of them sounding is cleared too.
+static u32 run_lane(Voice& v, u32 k, Run r) {
+    Lane& l = v.lane[k];
+    if (l.src == 1) return run_shot(l, r);
+    switch (k) {
+    case kLow: return run_low(l, r);
+    case kSnap: return run_snap(l, v.noise, r);
+    case kClick: return run_click(l, v.noise, r);
+    default: return run_blip(l, r);
+    }
+}
+static void run(Voice& v, i32* mix, i32* aux, u32 n, bool used) {
+    {
+        const Run r = {mix, n, true};
+        const u32 wrote = v.lane[kLow].amp > 0 ? run_lane(v, kLow, r) : 0;
+        for (u32 i = 2 * wrote; i < 2 * n; ++i) mix[i] = 0;
+    }
+    bool first = true;
+    for (u32 k = kSnap; k < lane_count; ++k) {
+        if (v.lane[k].amp <= 0) continue;
+        const Run r = {aux, n, first};
+        const u32 wrote = run_lane(v, k, r);
+        if (first) {
+            for (u32 i = 2 * wrote; i < 2 * n; ++i) aux[i] = 0;
+            first = false;
         }
     }
+    if (first && used)
+        for (u32 i = 0; i < 2 * n; ++i) aux[i] = 0;
 }
 
 // A lane's next ratchet hit.
@@ -1311,8 +1379,7 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
     bool late = false;
     const bool leads = census(voice, block.transport);
     i32 mix[2 * frames], aux[2 * frames], wet[2 * frames];
-    for (u32 i = 0; i < 2 * frames; ++i) mix[i] = 0;
-    bool sent = false;   // aux holds this block's snap, click and blip (cleared when the first of them sounds)
+    bool sent = false;   // aux holds this block's snap, click and blip (each stretch is written or cleared as it comes: run)
     // The voice that moved the census runs the space on the last cycle's sends, unless
     // that block was worked out early (below). A fresh voice never moves the census,
     // so the space is never skipped by a voice's silent first block.
@@ -1452,10 +1519,10 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
         const u32 n = until - at;
         if (n) {
             if (!sent && (voice.lane[kSnap].amp > 0 || voice.lane[kClick].amp > 0 || voice.lane[kBlip].amp > 0)) {
-                for (u32 i = 0; i < 2 * frames; ++i) aux[i] = 0;
+                for (u32 i = 0; i < 2 * at; ++i) aux[i] = 0;   // the stretches before had none of them
                 sent = true;
             }
-            run(voice, mix + 2 * at, aux + 2 * at, n);
+            run(voice, mix + 2 * at, aux + 2 * at, n, sent);
         }
         for (u32 k = 0; k < lane_count; ++k) {
             Lane& l = voice.lane[k];
