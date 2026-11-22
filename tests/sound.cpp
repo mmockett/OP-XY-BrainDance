@@ -252,8 +252,10 @@ int main() {
     }
     // the sound, pinned
     {
-        static const u32 expect[11] = {0xa3ce1fc5u, 0x72f8bbc5u, 0x74f66bc5u, 0x78769dc5u, 0x13830dc5u, 0xe70299c5u, 0xb3e0b5c5u,
-                                       0xf00525c5u, 0x2b55adc5u,
+        // The first nine moved once, with the space's change to half the sample rate (v1.0.1); the last two, with
+        // ring at 0, are as they were at v1.0.0.
+        static const u32 expect[11] = {0x1abfabc5u, 0xb6a4bbc5u, 0x1e67b1c5u, 0xe81c6fc5u, 0xfbea81c5u, 0xdd7399c5u, 0xc366adc5u,
+                                       0x46f5d3c5u, 0x04dcd5c5u,
                                        0x80e311c5u, 0x67957dc5u};   // ring at 0: the space silent
         for (u32 a = 0; a < 11; ++a) {
             const u32 got = a < 6 ? pinned(a * 10 + (a * 3) % 10, false, (a & 1) == 0) : a == 6 ? pinned(50, true, true) :

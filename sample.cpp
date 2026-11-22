@@ -203,13 +203,20 @@ static inline void pan(Lane& l, i32 p) {
 // (the stagger, dealt at each snap, a triplet 64th or 128th long) lets it
 // through or silences it, hard-edged. The voice that moves the census runs it,
 // a block behind, and adds it to its own output.
+// The network itself runs at half the sample rate, 22.05 kHz: each pair of
+// sends is averaged into it, and what it gives back is drawn out to the full
+// rate along straight lines. Its lines are damped to about 5 kHz every pass,
+// so little of it lies above what the half rate carries, and it costs half as
+// much. The gate and the stagger still cut it to the sample.
+const u32 halves = frames / 2;   // the network's frames a block
 struct Space {
-    // Each line keeps its first 64 frames again past its end, so a block reads
-    // its 64 frames in one straight run wherever they start.
-    opxy::i16 line[4][2048 + frames];
+    // Each line keeps its first 32 frames again past its end, so a block reads
+    // its 32 frames in one straight run wherever they start.
+    opxy::i16 line[4][1024 + halves];
     i32 damp[4];
-    i32 bus[frames];   // the sends this cycle, Q24
-    u32 at;            // frames written: a whole number of blocks, so a block's writes never wrap
+    i32 bus[frames];   // the sends this cycle, Q24, at the full rate
+    u32 at;            // the network's frames written: a whole number of blocks, so a block's writes never wrap
+    i32 last[2];       // the last frame it gave back, each side: the next block's first straight line starts there
     u32 gate;          // samples the gate stays open
     u32 chop;          // the stagger: a slice sounds where its bit is set
     u32 slice, left;   // a slice's length, and the samples left of this one
@@ -220,7 +227,7 @@ struct Space {
     u32 early_heard, early_ready;
 };
 static Space space;
-static const u32 space_length[4] = {1031, 1327, 1523, 1801};   // samples: 23 to 41 ms, no common factors
+static const u32 space_length[4] = {515, 663, 761, 899};   // the network's frames: 23 to 41 ms, no common factors
 
 // One line's block: what it gave back (back), minus half of what all four gave
 // (a lossless mix), at 0.85 a pass (about a second's tail, were it not gated),
@@ -230,10 +237,11 @@ static const u32 space_length[4] = {1031, 1327, 1523, 1801};   // samples: 23 to
 // the two products is the product of the difference, bit for bit.
 __attribute__((noinline)) static void space_line(opxy::i16* write, const opxy::i16* back, const i32* feed, i32& damp) {
     i32 d = damp;
-    for (u32 i = 0; i < frames; ++i) {
+    for (u32 i = 0; i < halves; ++i) {
         const i32 v = feed[0] + (static_cast<i32>(static_cast<u32>(product(*back++, 27853)) - static_cast<u32>(feed[1])) >> 15);
         feed += 2;
-        d += (v - d) >> 1;
+        const i32 x = v - d;
+        d += x - (x >> 2);   // three quarters of the way: the same cutoff as a half at the full rate
         *write++ = static_cast<opxy::i16>(clamp(d, -32767, 32767));
     }
     damp = d;
@@ -242,36 +250,61 @@ __attribute__((noinline)) static void space_line(opxy::i16* write, const opxy::i
 // What the four lines give back this block, as the two sides.
 __attribute__((noinline)) static void space_sides(i32* sides, const opxy::i16* r0, const opxy::i16* r1, const opxy::i16* r2,
                                                   const opxy::i16* r3) {
-    for (u32 i = 0; i < frames; ++i) {
+    for (u32 i = 0; i < halves; ++i) {
         const i32 left = *r0++ + *r2++, right = *r1++ + *r3++;
         *sides++ = left;
         *sides++ = right;
     }
 }
 
+// What the network gave back, drawn out to the full rate: between each of its
+// frames and the next, the point halfway. from: the frame before this block's first.
+__attribute__((noinline)) static void space_draw(i32* out, const i32* sides, i32* from) {
+    i32 left = from[0], right = from[1];
+    for (u32 i = 0; i < halves; ++i) {
+        const i32 l = sides[2 * i] << 11, r = sides[2 * i + 1] << 11;
+        out[4 * i] = (left >> 1) + (l >> 1);
+        out[4 * i + 1] = (right >> 1) + (r >> 1);
+        out[4 * i + 2] = l;
+        out[4 * i + 3] = r;
+        left = l;
+        right = r;
+    }
+    from[0] = left;
+    from[1] = right;
+}
+
 // A block of the space into out, both sides. False if its gate was shut
 // throughout: then out is left unwritten, and is silence.
 __attribute__((noinline)) static bool space_run(i32* out) {
     Space& sp = space;
-    const u32 w = sp.at & 2047u;
-    i32 sides[2 * frames];   // lines 0 and 2 (left), lines 1 and 3 (right), as given back
-    i32 feed[2 * frames];    // the send (Q14), and half of the four times 0.85 (Q15)
-    space_sides(sides, sp.line[0] + ((w - space_length[0]) & 2047u), sp.line[1] + ((w - space_length[1]) & 2047u),
-                sp.line[2] + ((w - space_length[2]) & 2047u), sp.line[3] + ((w - space_length[3]) & 2047u));
-    for (u32 i = 0; i < frames; ++i) {
-        feed[2 * i] = clamp(sp.bus[i] >> 10, -16384, 16384);
-        sp.bus[i] = 0;
+    const u32 w = sp.at & 1023u;
+    i32 sides[2 * halves];   // lines 0 and 2 (left), lines 1 and 3 (right), as given back
+    i32 feed[2 * halves];    // the send (Q14), and half of the four times 0.85 (Q15)
+    space_sides(sides, sp.line[0] + ((w - space_length[0]) & 1023u), sp.line[1] + ((w - space_length[1]) & 1023u),
+                sp.line[2] + ((w - space_length[2]) & 1023u), sp.line[3] + ((w - space_length[3]) & 1023u));
+    for (u32 i = 0; i < halves; ++i) {
+        feed[2 * i] = clamp(((sp.bus[2 * i] >> 1) + (sp.bus[2 * i + 1] >> 1)) >> 10, -16384, 16384);
+        sp.bus[2 * i] = 0;
+        sp.bus[2 * i + 1] = 0;
         feed[2 * i + 1] = ((sides[2 * i] + sides[2 * i + 1]) >> 1) * 27853;
     }
     // each line written out on its own, so each is a loop of its own
-    space_line(sp.line[0] + w, sp.line[0] + ((w - space_length[0]) & 2047u), feed, sp.damp[0]);
-    space_line(sp.line[1] + w, sp.line[1] + ((w - space_length[1]) & 2047u), feed, sp.damp[1]);
-    space_line(sp.line[2] + w, sp.line[2] + ((w - space_length[2]) & 2047u), feed, sp.damp[2]);
-    space_line(sp.line[3] + w, sp.line[3] + ((w - space_length[3]) & 2047u), feed, sp.damp[3]);
+    space_line(sp.line[0] + w, sp.line[0] + ((w - space_length[0]) & 1023u), feed, sp.damp[0]);
+    space_line(sp.line[1] + w, sp.line[1] + ((w - space_length[1]) & 1023u), feed, sp.damp[1]);
+    space_line(sp.line[2] + w, sp.line[2] + ((w - space_length[2]) & 1023u), feed, sp.damp[2]);
+    space_line(sp.line[3] + w, sp.line[3] + ((w - space_length[3]) & 1023u), feed, sp.damp[3]);
     if (w == 0)
         for (u32 k = 0; k < 4; ++k)
-            for (u32 i = 0; i < frames; ++i) sp.line[k][2048 + i] = sp.line[k][i];
-    sp.at += frames;
+            for (u32 i = 0; i < halves; ++i) sp.line[k][1024 + i] = sp.line[k][i];
+    sp.at += halves;
+    if (!sp.gate) {
+        // shut throughout: nothing to draw, but the next block's first line starts from this one's last frame
+        sp.last[0] = sides[2 * halves - 2] << 11;
+        sp.last[1] = sides[2 * halves - 1] << 11;
+        return false;
+    }
+    space_draw(out, sides, sp.last);
     // The gate and its stagger, a stretch at a time: open, the slice's bit says whether it sounds.
     bool heard = false;
     for (u32 at = 0; at < frames;) {
@@ -285,12 +318,8 @@ __attribute__((noinline)) static bool space_run(i32* out) {
             sp.left -= n;
             open = ((sp.chop >> sp.bit) & 1u) != 0;
         }
-        if (open) {
-            if (!heard) { for (u32 i = 0; i < 2 * at; ++i) out[i] = 0; heard = true; }
-            for (u32 i = 2 * at; i < 2 * (at + n); ++i) out[i] = sides[i] << 11;
-        } else if (heard) {
-            for (u32 i = 2 * at; i < 2 * (at + n); ++i) out[i] = 0;
-        }
+        if (open) heard = true;
+        else for (u32 i = 2 * at; i < 2 * (at + n); ++i) out[i] = 0;
         at += n;
     }
     return heard;
