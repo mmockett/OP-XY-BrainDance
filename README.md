@@ -14,7 +14,7 @@ targets Open-XY SDK 1.17 (the SDK's `staging` branch). Played on the device:
 the six algorithms and their variants, the screen, loading a sample and
 playing its hits, the Shift row. Checked on the host: its level, that hits
 land on the grid, that a key always plays the same. Its CPU cost is measured
-on an OP-XY for its catalog entry and isn't quoted here. It can't share a
+on an OP-XY for each release ([CPU](#cpu)). It can't share a
 firmware with Timestretch: both use the SDK's sample analysis, and a
 firmware's analyses share 2 MiB, all of which Timestretch reserves.
 
@@ -109,6 +109,20 @@ Sixteen, in [docs/presets.md](docs/presets.md). **Shred** is the default.
 Six sit on variants: Gate Storm (`shrd4`), Sub Hold (`shrd8`), Comb Teeth
 (`shrd2`), Threes (`shrd3`), Long Count (`shrd9`) and Two Step (`brk1`) among
 them.
+
+## CPU
+
+Measured on an OP-XY (OS 1.2.1) with the SDK's `profile benchmark`: one voice
+plays the SDK's generated two-second test sample at the default settings
+(Shred). Each figure is a share of the OP-XY's 580,352-cycle audio block: the
+mean over the test, and its worst single block. The screen isn't included.
+
+| Release | One voice | Worst block |
+| --- | ---: | ---: |
+| v1.0.0 | 2.60% | 5.64% |
+
+The first key also runs the reverb every key shares, so each further key costs
+less than the first.
 
 ## Building
 

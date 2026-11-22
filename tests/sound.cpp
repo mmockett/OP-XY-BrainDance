@@ -65,10 +65,13 @@ std::vector<i32> play(const Settings& set, const std::vector<int>& keys, u32 blo
 }
 
 // The sound, pinned: a hash of the exact output of each algorithm with three
-// keys, everything in play (the space, the comb, the clip, dropouts), and of
-// shred on a sample's tone. Integers only, so every host gives the same.
+// keys, everything in play (the space, the comb, the clip, dropouts), of
+// shred on a sample's tone, and of shred with one key alone, with and
+// without the sample (a lone voice rehearses its ticks and works the space
+// out early). Integers only, so every host gives the same.
 // A change that is meant to leave the sound alone must leave these alone.
-u32 pinned(u32 step, bool sampled, bool playing) {
+u32 early_blocks;   // blocks of the last pinned render that left the space's next block worked out early
+u32 pinned(u32 step, bool sampled, bool playing, u32 keys = 3) {
     using namespace opxy;
     using opxy::i16;
     std::memset(&braindance::engine::clock, 0, sizeof braindance::engine::clock);
@@ -102,8 +105,9 @@ u32 pinned(u32 step, bool sampled, bool playing) {
         std::memset(&voices[k], 0, sizeof voices[k]);
         braindance::initialize(voices[k], SampleView{pcm, 88200, 44100, 1});
     }
+    early_blocks = 0;
     for (u32 b = 0; b < 600; ++b)
-        for (u32 k = 0; k < 3; ++k) {
+        for (u32 k = 0; k < keys; ++k) {
             if (b < k * 40) continue;                    // the keys come in one by one
             if (b == k * 40) braindance::start(voices[k]);
             for (u32 i = 0; i < 64; ++i) pitch[i] = increments[k];
@@ -116,6 +120,7 @@ u32 pinned(u32 step, bool sampled, bool playing) {
             blk.analysis = sampled ? &analysis : 0;
             blk.output_channels = 2;
             braindance::render_sample(voices[k], blk);
+            if (braindance::engine::space.early_ready) ++early_blocks;
             for (u32 i = 0; i < 128; ++i) hash = (hash ^ u32(out[i])) * 16777619u;
         }
     return hash;
@@ -246,9 +251,15 @@ int main() {
     }
     // the sound, pinned
     {
-        static const u32 expect[7] = {0xa3ce1fc5u, 0x72f8bbc5u, 0x74f66bc5u, 0x78769dc5u, 0x13830dc5u, 0xe70299c5u, 0xb3e0b5c5u};
-        for (u32 a = 0; a < 7; ++a) {
-            const u32 got = a < 6 ? pinned(a * 10 + (a * 3) % 10, false, (a & 1) == 0) : pinned(50, true, true);
+        static const u32 expect[9] = {0xa3ce1fc5u, 0x72f8bbc5u, 0x74f66bc5u, 0x78769dc5u, 0x13830dc5u, 0xe70299c5u, 0xb3e0b5c5u,
+                                      0xf00525c5u, 0x2b55adc5u};
+        for (u32 a = 0; a < 9; ++a) {
+            const u32 got = a < 6 ? pinned(a * 10 + (a * 3) % 10, false, (a & 1) == 0) : a == 6 ? pinned(50, true, true) :
+                            a == 7 ? pinned(50, false, true, 1) : pinned(50, true, false, 1);
+            // one key alone must have used its quiet blocks (or the pinned hash proves nothing about them); three never may
+            if (a >= 7 && early_blocks == 0) fail("a lone key never worked the space out early");
+            if (a == 8 && braindance::engine::touched == 0) fail("a lone key on a sample never read ahead through it");
+            if (a < 7 && early_blocks > 12) fail("the space was worked out early with other keys sounding");
             if (got != expect[a]) { std::printf("FAIL the sound changed: render %u hashes to 0x%08x, not 0x%08x\n", a, got, expect[a]); ++failures; }
         }
     }

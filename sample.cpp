@@ -6,8 +6,12 @@
 // go by their reciprocals. Each stage of the sound is a short loop of its own
 // over the block (a lane's oscillator, then its level and pan; the space's
 // lines one by one), with its settings in locals: the form the OP-XY runs
-// fastest. tests/sound.cpp pins the exact output, so changes to the speed
-// can't change the sound.
+// fastest. The heaviest block is the one where a tick starts hits, so the
+// quiet blocks just before a tick take what they can of its work: the tick
+// is rehearsed, the sample its hits will play is read through, and a voice
+// playing alone works the space's next block out early (render_sample).
+// tests/sound.cpp pins the exact output, so changes to the speed can't
+// change the sound.
 #include "core.h"
 #include "harvest.h"
 #include <opxy/q15.hpp>
@@ -146,12 +150,14 @@ static inline i32 jitter(Voice& v, i32 a) { return ((static_cast<i32>(next(v.ran
 static inline u32 below(Voice& v, u32 n) { return n ? rest(next(v.random) >> 8, n) : 0; }
 
 // sin(2 pi phase), Q15: a parabola refined once (Nexus's).
+// Every factor fits 16 bits, so each multiply is the OP-XY's one-cycle 16 x 16
+// (a 32-bit multiply takes about three).
 static inline i32 sine(u32 phase) {
     const i32 s = static_cast<i32>(phase) >> 16;
     const i32 a = s < 0 ? -s : s;
-    const i32 p = (s * (32767 - a)) >> 13;
+    const i32 p = product(s, 32767 - a) >> 13;
     const i32 pa = p < 0 ? -p : p;
-    return p + ((((product(p, pa) >> 15) - p) * 7373) >> 15);
+    return p + (product((product(p, pa) >> 15) - p, 7373) >> 15);
 }
 // The key's increment moved by octaves into [low, 2 low): the lane keeps the key's pitch class.
 static inline u32 fold(u32 inc, u32 low) {
@@ -208,18 +214,24 @@ struct Space {
     u32 chop;          // the stagger: a slice sounds where its bit is set
     u32 slice, left;   // a slice's length, and the samples left of this one
     u32 bit;           // this slice's bit
+    // Its next block, worked out early when a voice had time to spare (render_sample):
+    // both sides, whether its gate opened at all, and whether it is waiting to be used.
+    i32 early[2 * frames];
+    u32 early_heard, early_ready;
 };
 static Space space;
 static const u32 space_length[4] = {1031, 1327, 1523, 1801};   // samples: 23 to 41 ms, no common factors
 
 // One line's block: what it gave back (back), minus half of what all four gave
 // (a lossless mix), at 0.85 a pass (about a second's tail, were it not gated),
-// with the send, a little darker each pass. feed holds the send and the half
-// for each frame.
+// with the send, a little darker each pass. feed holds, for each frame, the
+// send and that half already times 0.85 (Q15): what a line gave back fits 16
+// bits, so its own multiply is the one-cycle 16 x 16, and the difference of
+// the two products is the product of the difference, bit for bit.
 __attribute__((noinline)) static void space_line(opxy::i16* write, const opxy::i16* back, const i32* feed, i32& damp) {
     i32 d = damp;
     for (u32 i = 0; i < frames; ++i) {
-        const i32 v = feed[0] + (((*back++ - feed[1]) * 27853) >> 15);
+        const i32 v = feed[0] + (static_cast<i32>(static_cast<u32>(product(*back++, 27853)) - static_cast<u32>(feed[1])) >> 15);
         feed += 2;
         d += (v - d) >> 1;
         *write++ = static_cast<opxy::i16>(clamp(d, -32767, 32767));
@@ -243,13 +255,13 @@ __attribute__((noinline)) static bool space_run(i32* out) {
     Space& sp = space;
     const u32 w = sp.at & 2047u;
     i32 sides[2 * frames];   // lines 0 and 2 (left), lines 1 and 3 (right), as given back
-    i32 feed[2 * frames];    // the send (Q14), and half of the four
+    i32 feed[2 * frames];    // the send (Q14), and half of the four times 0.85 (Q15)
     space_sides(sides, sp.line[0] + ((w - space_length[0]) & 2047u), sp.line[1] + ((w - space_length[1]) & 2047u),
                 sp.line[2] + ((w - space_length[2]) & 2047u), sp.line[3] + ((w - space_length[3]) & 2047u));
     for (u32 i = 0; i < frames; ++i) {
         feed[2 * i] = clamp(sp.bus[i] >> 10, -16384, 16384);
         sp.bus[i] = 0;
-        feed[2 * i + 1] = (sides[2 * i] + sides[2 * i + 1]) >> 1;
+        feed[2 * i + 1] = ((sides[2 * i] + sides[2 * i + 1]) >> 1) * 27853;
     }
     // each line written out on its own, so each is a loop of its own
     space_line(sp.line[0] + w, sp.line[0] + ((w - space_length[0]) & 2047u), feed, sp.damp[0]);
@@ -780,6 +792,64 @@ static void tick(Voice& v, u32 t, const Shape& s) {
     }
 }
 
+// A tick's code and tables have gone cold by the time it comes round again,
+// and on the OP-XY a tick with hits then costs several times its work, in the
+// very block that has the most to do. So when a voice has quiet blocks to
+// spare shortly before a tick, it plays that tick on a copy of itself (the
+// rehearsal), and a block later reads through the stretches of the sample the
+// copy's hits would play first, so those are to hand as well: a sample read
+// for the first time costs about a hundred cycles every 32 bytes. Nothing the
+// rehearsal does is kept, so the sound is the same without it.
+struct Rehearsal {
+    Voice copy;        // the voice after the tick
+    const Voice* of;   // whose rehearsal this is, and of which tick
+    u32 tick;
+};
+static Rehearsal rehearsal;
+u32 touched;           // what warm read, summed (so its reads are kept; the tests read it)
+
+__attribute__((noinline)) static void rehearse(const Voice& voice, u32 t, const Shape& s) {
+    rehearsal.copy = voice;
+    const u32 gate = space.gate, chop = space.chop, slice = space.slice, left = space.left, bit = space.bit;
+    const u32 struck = strikes;
+    tick(rehearsal.copy, t, s);
+    space.gate = gate;
+    space.chop = chop;
+    space.slice = slice;
+    space.left = left;
+    space.bit = bit;
+    strikes = struck;
+    rehearsal.of = &voice;
+    rehearsal.tick = t;
+}
+
+// Reads through what each of a rehearsed voice's lanes would play of the
+// sample in its first two blocks, a frame every 32 bytes: at most 1024 frames a lane.
+__attribute__((noinline)) static void warm(const Voice& v) {
+    u32 sum = 0;
+    for (u32 k = 0; k < lane_count; ++k) {
+        const Lane& l = v.lane[k];
+        if (l.amp <= 0 || !l.src || !l.len || l.len > 65536u) continue;
+        u32 first, count;   // frames
+        if (l.src == 2) {   // a tone loop: its phase moves by the pitch and the sweep, at most
+            const u32 step = (l.inc + static_cast<u32>(l.sweep < 0 ? -l.sweep : l.sweep)) >> l.cycles;
+            const u32 span = step > 0xffffffffu / (2 * frames) ? 0xffffffffu : step * (2 * frames);
+            first = ((l.pos >> 16) * l.len) >> 16;
+            count = (((span >> 16) * l.len) >> 16) + 2;
+        } else {            // a hit or a noise loop: its position moves by its step
+            first = l.pos >> 16;
+            count = (((l.step >> 8) * (2 * frames)) >> 8) + 2;
+        }
+        if (first >= l.len) continue;
+        if (count > 1024) count = 1024;
+        if (count > l.len - first) count = l.len - first;
+        const opxy::i16* d = l.data + first * l.channels;
+        const u32 words = count * l.channels;
+        for (u32 i = 0; i < words; i += 16) sum += static_cast<u32>(d[i]);
+    }
+    touched += sum;
+}
+
 // ------------------------------------------------------------------ the lanes' sound, a stretch of samples at a time
 // Each adds its lane into the mix (Q24), left and right interleaved. A lane's
 // settings are read into locals for the stretch and written back after it: the
@@ -822,6 +892,18 @@ static inline i32 clip_read(const Clip& c, u32 pos, bool wrap) {
 }
 // A tone loop at its phase (Q32 of the whole loop).
 static inline i32 clip_tone(const Clip& c, u32 phase) { return clip_read(c, (phase >> 16) * c.len, true); }
+// The same for a loop of one channel and at most 65536 frames, as nearly all
+// are: the position can't pass the loop's end, so there is nothing to check.
+static inline i32 clip_tone_plain(const Clip& c, u32 phase) {
+    const u32 pos = (phase >> 16) * c.len;
+    const u32 i = pos >> 16;
+    u32 j = i + 1;
+    if (j >= c.len) j = 0;
+    const i32 a = c.data[i], b = c.data[j];
+    const i32 x = a + (((b - a) * static_cast<i32>((pos >> 1) & 0x7fffu)) >> 15);
+    return (x * c.gain) >> 3;
+}
+static inline bool plain(const Clip& c) { return c.channels != 2 && c.len <= 65536u; }
 // A noise loop's next value.
 static inline i32 clip_noise(const Clip& c, u32& pos, u32 step) {
     const i32 x = clip_read(c, pos, true);
@@ -900,7 +982,8 @@ __attribute__((noinline)) static void run_low(Lane& l, Run r) {
     }
     if (l.src == 2) {
         const Clip c = clip_of(l);
-        for (u32 i = 0; i < n; ++i) dry[i] = clip_tone(c, at[i]);
+        if (plain(c)) for (u32 i = 0; i < n; ++i) dry[i] = clip_tone_plain(c, at[i]);
+        else for (u32 i = 0; i < n; ++i) dry[i] = clip_tone(c, at[i]);
     } else if (l.amp2) {
         const i32 bend = l.amp2;   // shred's sweeps bend their own phase by color (Q15), up to about a radian and a half
         for (u32 i = 0; i < n; ++i) {
@@ -1230,9 +1313,20 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
     i32 mix[2 * frames], aux[2 * frames], wet[2 * frames];
     for (u32 i = 0; i < 2 * frames; ++i) mix[i] = 0;
     bool sent = false;   // aux holds this block's snap, click and blip (cleared when the first of them sounds)
-    // The voice that moved the census runs the space on the last cycle's sends.
-    // A fresh voice never moves it, so the space is never skipped by a voice's silent first block.
-    const bool heard = leads && space_run(wet);
+    // The voice that moved the census runs the space on the last cycle's sends, unless
+    // that block was worked out early (below). A fresh voice never moves the census,
+    // so the space is never skipped by a voice's silent first block.
+    bool heard = false;
+    const i32* wetter = wet;
+    if (leads) {
+        if (space.early_ready) {
+            space.early_ready = 0;
+            heard = space.early_heard != 0;
+            wetter = space.early;
+        } else {
+            heard = space_run(wet);
+        }
+    }
 
     const i32* p = block.parameters;
     // The keys held: every Brain Dance voice that rendered in the last whole block.
@@ -1331,6 +1425,17 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
     if (clock.frac != 0) ++tick;
     u32 at = 0;
     if (late && clock.frac != 0) engine::tick(voice, clock.tick, s);
+    // A quiet block (nothing sounding, no ratchet to come) with a tick close ahead has time to spare,
+    // and the tick's own block has none. Three blocks before the tick, rehearse it; two before, read
+    // through the sample its hits would play (both above). One block before, a voice playing alone
+    // works out the space's next block now, so the tick's block needn't: alone, nothing else can send
+    // to the space this cycle, so that block comes out the same.
+    bool quiet = voice.stage == 2 && !late;
+    for (u32 k = 0; k < lane_count; ++k)
+        if (voice.lane[k].amp > 0 || voice.lane[k].repeats > 0) quiet = false;
+    if (quiet && to_tick >= 3 * frames && to_tick < 4 * frames) rehearse(voice, tick, s);
+    if (quiet && to_tick >= 2 * frames && to_tick < 3 * frames && rehearsal.of == &voice && rehearsal.tick == tick) warm(rehearsal.copy);
+    const bool early = quiet && leads && clock.last == 1 && to_tick >= frames && to_tick < 2 * frames;
     for (;;) {
         if (to_tick == at && at < frames) {
             engine::tick(voice, tick, s);
@@ -1373,6 +1478,7 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
         const i32 amount = (s.ring - 16384) * 2;                          // Q15, over ring's upper half
         comb_block(mix, voice, cycle < 16 ? 16 : cycle > 120 ? 120 : cycle, (amount * 31785) << 1, amount << 15);
     }
+    bool out = false;   // the block is on its way out
     if (s.crush) {
         const i32 c = s.crush;
         const i32 d = c < 19661 ? c : 19661;                              // the first 60%: drive alone, x1 to x8
@@ -1382,25 +1488,33 @@ void render_sample(Voice& voice, const opxy::SampleBlock& block) {
         const u32 bits = static_cast<u32>(rest * 30 >> 15);              // up to 11 of 24 bits gone
         if (every == 1 && bits == 0 && voice.crush_count == 0 && !voice.drop && block.output_channels == 2) {
             // the usual block (the first 60%, both sides out, no dropout): the drive, the clip and the way out in one pass
-            if (heard) crush_out_with(block.output, mix, wet, drive, voice.crushed);
+            if (heard) crush_out_with(block.output, mix, wetter, drive, voice.crushed);
             else crush_out(block.output, mix, drive, voice.crushed);
-            return;
+            out = true;
+        } else {
+            crush_block(mix, drive, ~((1 << bits) - 1), every, voice.crushed, voice.crush_count);
         }
-        crush_block(mix, drive, ~((1 << bits) - 1), every, voice.crushed, voice.crush_count);
     }
-    // glitch's dropout: dead silence from the block's start
-    if (voice.drop) {
-        const u32 n = voice.drop < frames ? voice.drop : frames;
-        for (u32 i = 0; i < 2 * n; ++i) mix[i] = 0;
-        voice.drop -= n;
+    if (!out) {
+        // glitch's dropout: dead silence from the block's start
+        if (voice.drop) {
+            const u32 n = voice.drop < frames ? voice.drop : frames;
+            for (u32 i = 0; i < 2 * n; ++i) mix[i] = 0;
+            voice.drop -= n;
+        }
+        // Out, with the space from the voice that leads the cycle: Q24 to Q31 at half scale, the declared peak.
+        if (block.output_channels == 2) {
+            if (heard) out_with(block.output, mix, wetter);
+            else out_of(block.output, mix);
+        } else {
+            if (heard) for (u32 i = 0; i < 2 * frames; ++i) mix[i] += wetter[i];
+            for (u32 i = 0; i < frames; ++i) block.output[i] = clamp((mix[2 * i] >> 1) + (mix[2 * i + 1] >> 1), -one, one) << 6;
+        }
     }
-    // Out, with the space from the voice that leads the cycle: Q24 to Q31 at half scale, the declared peak.
-    if (block.output_channels == 2) {
-        if (heard) out_with(block.output, mix, wet);
-        else out_of(block.output, mix);
-    } else {
-        if (heard) for (u32 i = 0; i < 2 * frames; ++i) mix[i] += wet[i];
-        for (u32 i = 0; i < frames; ++i) block.output[i] = clamp((mix[2 * i] >> 1) + (mix[2 * i + 1] >> 1), -one, one) << 6;
+    // the space's next block, early (see quiet, above)
+    if (early) {
+        space.early_heard = space_run(space.early) ? 1 : 0;
+        space.early_ready = 1;
     }
 }
 }
