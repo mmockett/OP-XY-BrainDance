@@ -120,6 +120,7 @@ mean over the test, and its worst single block. The screen isn't included.
 | Release | One voice | Worst block |
 | --- | ---: | ---: |
 | v1.0.0 | 2.60% | 5.64% |
+| v1.0.1 | 1.98% | 3.78% |
 
 The first key also runs the reverb every key shares, so each further key costs
 less than the first.
